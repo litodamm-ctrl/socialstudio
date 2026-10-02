@@ -43,7 +43,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         const account = await env.DB.prepare("SELECT brand FROM instagram_accounts WHERE owner_id = ? AND brand = ?")
           .bind(ownerId, current.name).first<{ brand: string }>();
         if (!account) return Response.json({ error: "Conecta primero la cuenta de Instagram de esta marca." }, { status: 409 });
-        if (!env.OPENAI_API_KEY || !env.BUCKET) return Response.json({ error: "Configura OPENAI_API_KEY y la biblioteca multimedia para activar la programación autónoma." }, { status: 409 });
+        if (!env.OPENAI_API_KEY || !env.BUCKET || !process.env.CRON_SECRET || !env.SITE_ORIGIN || !env.INSTAGRAM_TOKEN_ENCRYPTION_KEY) return Response.json({ error: "Completa OpenAI, R2, SITE_ORIGIN, CRON_SECRET y la clave de cifrado de Instagram antes de activar el piloto." }, { status: 409 });
       }
       fields.push("auto_schedule = ?"); values.push(input.autoSchedule ? 1 : 0);
     }
@@ -56,9 +56,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
       fields.push("auto_crosspost = ?"); values.push(input.autoCrosspost ? 1 : 0);
     }
+    if (typeof input.autoStories === "boolean") { fields.push("auto_stories = ?"); values.push(input.autoStories ? 1 : 0); }
+    if (typeof input.storyTime === "string") {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.storyTime)) return Response.json({ error: "Elige una hora válida para las historias." }, { status: 400 });
+      fields.push("story_time = ?"); values.push(input.storyTime);
+    }
     if (Array.isArray(input.postingDays)) {
       const days = [...new Set(input.postingDays.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6))].sort();
-      if (days.length < 1 || days.length > 5) return Response.json({ error: "Elige de 1 a 5 días por semana." }, { status: 400 });
+      if (days.length < 1 || days.length > 7) return Response.json({ error: "Elige de 1 a 7 días por semana." }, { status: 400 });
       fields.push("posting_days = ?"); values.push(JSON.stringify(days));
     }
     if (typeof input.preferredTime === "string") {

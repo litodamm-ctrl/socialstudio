@@ -98,6 +98,9 @@ type Brand = {
   autoCrosspost: boolean;
   postingDays: number[];
   preferredTime: string;
+  storyTime: string;
+  autoStories: boolean;
+  automationStatus: { cycleStart: string; cycleEnd: string; planned: number; total: number; failed: number; lastError: string | null } | null;
 };
 
 type BrandAsset = { id: string; name: string; contentType: string; size: number };
@@ -126,7 +129,7 @@ function statusLabel(status: Post["status"]) {
 }
 
 export default function Home() {
-  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [2, 4, 6], preferredTime: "18:00" })));
+  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [week, setWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [posts, setPosts] = useState<Post[]>([]);
@@ -135,6 +138,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [brand, setBrand] = useState(defaultBrands[0].name);
   const [caption, setCaption] = useState("");
   const [mediaType, setMediaType] = useState("Imagen");
@@ -159,6 +163,7 @@ export default function Home() {
   const [agentCallToAction, setAgentCallToAction] = useState("");
   const [agentGenerating, setAgentGenerating] = useState(false);
   const [agentConfigured, setAgentConfigured] = useState<boolean | null>(null);
+  const [agentMissing, setAgentMissing] = useState<string[]>([]);
   const [agentError, setAgentError] = useState("");
   const [agentDraft, setAgentDraft] = useState<AgentDraft | null>(null);
   const [agentPreviewUrl, setAgentPreviewUrl] = useState("");
@@ -172,8 +177,10 @@ export default function Home() {
   const [brandDrive, setBrandDrive] = useState("");
   const [brandAutoSchedule, setBrandAutoSchedule] = useState(false);
   const [brandAutoCrosspost, setBrandAutoCrosspost] = useState(false);
-  const [brandPostingDays, setBrandPostingDays] = useState<number[]>([2, 4, 6]);
+  const [brandPostingDays, setBrandPostingDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
   const [brandPreferredTime, setBrandPreferredTime] = useState("18:00");
+  const [brandStoryTime, setBrandStoryTime] = useState("09:00");
+  const [brandAutoStories, setBrandAutoStories] = useState(true);
   const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([]);
 
   const reloadBrands = useCallback(async () => {
@@ -213,8 +220,9 @@ export default function Home() {
         setConnectedFacebookPages(pages);
       }
       if (agentStatus.ok) {
-        const status = await agentStatus.json() as { configured?: boolean };
+        const status = await agentStatus.json() as { configured?: boolean; missing?: string[] };
         setAgentConfigured(Boolean(status.configured));
+        setAgentMissing(status.missing ?? []);
       }
       setLoadError("");
     } catch (error) {
@@ -347,6 +355,10 @@ export default function Home() {
   const unscheduledPosts = posts.filter((post) => !post.scheduledAt);
 
   async function savePost(status: "draft" | "scheduled") {
+    if (mediaType === "Historia" && selectedMediaFile?.type.startsWith("video/")) {
+      setToast("Las historias automáticas admiten imágenes JPG o PNG. Selecciona una imagen.");
+      return;
+    }
     if (!caption.trim()) {
       setToast("Escribe el texto de la publicación antes de guardarla.");
       return;
@@ -369,21 +381,21 @@ export default function Home() {
         finalMediaUrl = signed.mediaUrl;
         setUploadedMediaUrl(finalMediaUrl);
       }
-      const response = await fetch("/api/posts", {
-        method: "POST",
+      const response = await fetch(editingPostId ? `/api/posts/${editingPostId}` : "/api/posts", {
+        method: editingPostId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brand, caption: caption.trim(), mediaType, mediaUrl: finalMediaUrl, scheduledAt: status === "scheduled" ? new Date(scheduledAt).toISOString() : null, status }),
       });
       const data = await response.json() as { error?: string; post: Post };
       if (!response.ok) throw new Error(data.error ?? "No se pudo guardar la publicación");
-      setPosts((current) => [data.post, ...current]);
+      setPosts((current) => [data.post, ...current.filter((item) => item.id !== data.post.id)]);
       setCaption("");
       setSelectedMediaFile(null);
       setUploadedMediaUrl("");
       setMediaPreview("");
       if (mediaInput.current) mediaInput.current.value = "";
       setDrawerOpen(false);
-      setToast(status === "scheduled" ? (mediaType === "Historia" ? "Guardada en el calendario. Las Historias todavía se publican manualmente." : "Guardada. Instagram la publicará automáticamente a la hora programada.") : "Borrador guardado.");
+      setToast(status === "scheduled" ? "Guardada en el calendario. Se publicará a la hora programada si la cuenta y sus permisos están activos." : "Borrador guardado.");
       window.setTimeout(() => setToast(""), 5200);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "No se pudo guardar la publicación");
@@ -423,6 +435,10 @@ export default function Home() {
     if (!file) return;
     const isImage = file.type === "image/jpeg" || file.type === "image/png";
     const isVideo = file.type === "video/mp4";
+    if (mediaType === "Historia" && isVideo) {
+      setToast("Para una historia automática, elige una imagen JPG o PNG.");
+      return;
+    }
     if (!isImage && !isVideo) {
       setToast("Elige una imagen JPG/PNG o un video MP4.");
       return;
@@ -447,8 +463,22 @@ export default function Home() {
   }
 
   function openComposer() {
+    if (editingPostId) { setCaption(""); clearSelectedMedia(); setMediaType("Imagen"); }
+    setEditingPostId(null);
     setDrawerOpen(true);
     setMobileMenu(false);
+  }
+
+  function editPost(post: Post) {
+    setEditingPostId(post.id);
+    setBrand(post.brand);
+    setCaption(post.caption);
+    setMediaType(post.mediaType);
+    setSelectedMediaFile(null);
+    setUploadedMediaUrl(post.mediaUrl ?? "");
+    setMediaPreview(post.mediaUrl ?? "");
+    setScheduledAt(post.scheduledAt ? localDateValue(new Date(post.scheduledAt)) : "");
+    setDrawerOpen(true);
   }
 
   async function generateWithAgent() {
@@ -500,6 +530,7 @@ export default function Home() {
       const blob = await response.blob();
       const source = new File([blob], "social-studio-creative.png", { type: blob.type || "image/png" });
       const jpeg = await prepareMediaFile(source);
+      openComposer();
       setBrand(agentDraft.brand);
       setCaption(agentDraft.caption);
       setMediaType("Imagen");
@@ -507,7 +538,6 @@ export default function Home() {
       setUploadedMediaUrl("");
       setMediaPreview(URL.createObjectURL(jpeg));
       setAgentOpen(false);
-      openComposer();
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "No pudimos abrir el creativo.");
     }
@@ -540,6 +570,8 @@ export default function Home() {
     setBrandAutoCrosspost(item.autoCrosspost);
     setBrandPostingDays(item.postingDays);
     setBrandPreferredTime(item.preferredTime);
+    setBrandStoryTime(item.storyTime ?? "09:00");
+    setBrandAutoStories(item.autoStories ?? true);
     setBrandAssets([]);
     setBrand(item.name);
     if (!item.id.startsWith("seed-")) {
@@ -590,7 +622,7 @@ export default function Home() {
     try {
       const response = await fetch(`/api/brands/${managedBrand.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ essence: brandEssence, websiteUrl: brandWebsite, driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime }),
+        body: JSON.stringify({ essence: brandEssence, websiteUrl: brandWebsite, driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime, storyTime: brandStoryTime, autoStories: brandAutoStories }),
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo guardar el perfil.");
@@ -603,7 +635,7 @@ export default function Home() {
 
   async function toggleBrandActive(item: Brand) {
     const action = item.active ? "quitar" : "restaurar";
-    if (item.active && !window.confirm(`¿Quitar ${item.name} de las marcas activas? Sus publicaciones programadas, historial, archivos y cuenta conectada se conservarán. Las publicaciones que ya están en agenda seguirán activas.`)) return;
+    if (item.active && !window.confirm(`¿Quitar ${item.name} de las marcas activas? Su historial, archivos y cuenta conectada se conservarán. Se pausarán las piezas pendientes del agente; las publicaciones manuales conservarán su programación.`)) return;
     setBrandBusy(true);
     try {
       const response = await fetch(`/api/brands/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: !item.active }) });
@@ -732,7 +764,7 @@ export default function Home() {
 
           <section className="connection-banner">
             <div className="connection-symbol"><Camera size={18} /></div>
-            <div className="connection-text"><strong>{connectedBrands.length ? `Instagram conectado${connectedBrands.length === 1 ? "" : "s"}: ${connectedBrands.map((item) => `@${connectedAccounts[item.name]}`).join(", ")}` : "Conecta una cuenta de Instagram"}</strong><span>{connectedBrands.length ? "Las imágenes y los Reels se publican automáticamente según el calendario. Las Historias siguen siendo manuales." : "Autoriza tu cuenta profesional de Instagram para activar la publicación programada."}</span></div>
+            <div className="connection-text"><strong>{connectedBrands.length ? `Instagram conectado${connectedBrands.length === 1 ? "" : "s"}: ${connectedBrands.map((item) => `@${connectedAccounts[item.name]}`).join(", ")}` : "Conecta una cuenta de Instagram"}</strong><span>{connectedBrands.length ? "Feed, Reels e historias de imagen se publican según el calendario y los permisos de cada cuenta." : "Autoriza tu cuenta profesional de Instagram para activar la publicación programada."}</span></div>
             <button className="banner-link" onClick={() => connectedBrands.length ? (setBrand(connectedBrands[0].name), openComposer()) : connectAccount(brands[0].name)}>{connectedBrands.length ? "Preparar contenido" : "Conectar cuenta"} <ChevronRight size={16} /></button>
             <button className="banner-dismiss" aria-label="Cerrar aviso" onClick={(event) => event.currentTarget.parentElement?.classList.add("banner-hidden")}><X size={16} /></button>
           </section>
@@ -750,7 +782,7 @@ export default function Home() {
                   <div className="day-heading"><span>{format(day, "EEE", { locale: es }).replace(".", "")}</span><b className={isToday ? "today-number" : ""}>{format(day, "d")}</b></div>
                   <div className="day-content">
                     {items.map((post) => { const account = brandFor(post.brand, brands); return <article className="calendar-post" key={post.id} style={{ "--brand-color": account.color } as React.CSSProperties}>
-                      {post.status !== "published" && <button className="calendar-post-remove" aria-label="Cancelar publicación" title={post.publicationError ?? "Cancelar publicación programada"} onClick={() => void removePost(post)}><X size={12} /></button>}<div className="post-time">{format(new Date(post.scheduledAt!), "h:mm a", { locale: es })}</div><div className="post-brand">{account.name}</div><p>{post.caption}</p><span className="post-state">{statusLabel(post.status)}</span>
+                      {post.status !== "published" && post.status !== "publishing" && <button className="calendar-post-edit" aria-label="Editar publicación" onClick={() => editPost(post)}><Settings2 size={12} /></button>}{post.status !== "published" && <button className="calendar-post-remove" aria-label="Cancelar publicación" title={post.publicationError ?? "Cancelar publicación programada"} onClick={() => void removePost(post)}><X size={12} /></button>}<div className="post-time">{format(new Date(post.scheduledAt!), "h:mm a", { locale: es })}</div><div className="post-brand">{account.name}</div><p>{post.caption}</p><span className="post-state">{statusLabel(post.status)}</span>
                     </article>; })}
                     {items.length === 0 && <button className="day-add" aria-label={`Crear publicación para ${format(day, "d MMMM", { locale: es })}`} onClick={() => { setScheduledAt(localDateValue(new Date(day.setHours(18, 0, 0, 0)))); openComposer(); }}><Plus size={15} /></button>}
                   </div>
@@ -764,7 +796,7 @@ export default function Home() {
             <div className="queue-panel">
               <div className="panel-heading"><div><h2>Próximas publicaciones</h2><p>Contenido guardado para tus marcas</p></div><button className="text-button" onClick={() => setToast("Todas las publicaciones ya aparecen en tu calendario.")}>Ver calendario <ChevronRight size={15} /></button></div>
               {loading ? <div className="empty-state"><span className="loader-dot" />Cargando calendario…</div> : loadError ? <div className="empty-state empty-error"><p>{loadError}</p><button onClick={() => void reloadPosts()}>Intentar de nuevo</button></div> : scheduledPosts.length === 0 && unscheduledPosts.length === 0 ? <div className="empty-state"><div className="empty-icon"><CalendarDays size={21} /></div><strong>Tu calendario está listo</strong><span>Programa la primera pieza para ver aquí tus próximas publicaciones.</span><button className="empty-cta" onClick={openComposer}><Plus size={16} /> Crear publicación</button></div> : <div className="queue-list">
-                {[...scheduledPosts, ...unscheduledPosts].slice(0, 5).map((post) => { const account = brandFor(post.brand, brands); return <div className="queue-item" key={post.id}><span className="account-dot queue-avatar" style={{ background: account.color }}>{account.initials}</span><div className="queue-copy"><strong>{account.name}</strong><span>{post.caption}</span></div><div className="queue-date">{post.scheduledAt ? format(new Date(post.scheduledAt), "d MMM · h:mm a", { locale: es }) : "Sin fecha"}<small>{statusLabel(post.status)}{post.facebookStatus === "published" ? " · Facebook" : post.facebookStatus === "failed" ? " · Error en Facebook" : ""}</small></div>{post.status !== "published" && <button className="plain-icon queue-more" aria-label={post.status === "scheduled" ? "Cancelar publicación" : "Eliminar elemento"} title={post.publicationError ?? post.facebookError ?? undefined} onClick={() => void removePost(post)}><Trash2 size={16} /></button>}{post.status === "published" && post.facebookStatus === "failed" && <button className="plain-icon queue-more" aria-label="Reintentar publicación en Facebook" title={post.facebookError ?? "Reintentar Facebook"} onClick={() => void retryFacebookPost(post)}><RefreshCw size={15} /></button>}</div>; })}
+                {[...scheduledPosts, ...unscheduledPosts].slice(0, 5).map((post) => { const account = brandFor(post.brand, brands); return <div className="queue-item" key={post.id}><span className="account-dot queue-avatar" style={{ background: account.color }}>{account.initials}</span><div className="queue-copy"><strong>{account.name}</strong><span>{post.caption}</span></div><div className="queue-date">{post.scheduledAt ? format(new Date(post.scheduledAt), "d MMM · h:mm a", { locale: es }) : "Sin fecha"}<small>{statusLabel(post.status)}{post.facebookStatus === "published" ? " · Facebook" : post.facebookStatus === "failed" ? " · Error en Facebook" : ""}</small></div>{post.status !== "published" && post.status !== "publishing" && <button className="plain-icon queue-more" aria-label="Editar publicación" onClick={() => editPost(post)}><Settings2 size={16} /></button>}{post.status !== "published" && <button className="plain-icon queue-more" aria-label={post.status === "scheduled" ? "Cancelar publicación" : "Eliminar elemento"} title={post.publicationError ?? post.facebookError ?? undefined} onClick={() => void removePost(post)}><Trash2 size={16} /></button>}{post.status === "published" && post.facebookStatus === "failed" && <button className="plain-icon queue-more" aria-label="Reintentar publicación en Facebook" title={post.facebookError ?? "Reintentar Facebook"} onClick={() => void retryFacebookPost(post)}><RefreshCw size={15} /></button>}</div>; })}
               </div>}
             </div>
 
@@ -774,7 +806,7 @@ export default function Home() {
             </aside>
           </section>
 
-          <footer className="bottom-note"><MessageSquareText size={15} /><span>{connectedBrands.length ? "La publicación automática está activa para imágenes y Reels programados. Las Historias siguen siendo manuales." : "Lo que guardes aquí queda como planificación. Conecta Instagram para activar la publicación automática."}</span></footer>
+          <footer className="bottom-note"><MessageSquareText size={15} /><span>{connectedBrands.length ? "La publicación programada admite feed, Reels e historias de imagen, con conexiones y permisos vigentes." : "Lo que guardes aquí queda como planificación. Conecta Instagram para activar la publicación automática."}</span></footer>
         </div>
       </section>
 
@@ -792,8 +824,12 @@ export default function Home() {
           <input ref={brandAssetInput} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown" hidden onChange={(event) => void uploadBrandAsset(event.target.files?.[0])} />
           <button className="asset-upload-button" onClick={() => brandAssetInput.current?.click()} disabled={brandBusy}><FileText size={16} /><span><strong>Agregar logo o brochure</strong><small>JPG, PNG, WebP, PDF, TXT o MD · hasta 15 MB</small></span><Plus size={16} /></button>
           {brandAssets.length > 0 && <div className="brand-asset-list">{brandAssets.map((asset) => <div className="brand-asset-row" key={asset.id}><FileText size={15} /><span>{asset.name}<small>{(asset.size / (1024 * 1024)).toFixed(1)} MB</small></span><button className="plain-icon" aria-label={`Quitar ${asset.name}`} onClick={() => void removeBrandAsset(asset)}><Trash2 size={14} /></button></div>)}</div>}
-          <div className="autopilot-card"><label className="autopilot-toggle"><input type="checkbox" checked={brandAutoSchedule} onChange={(event) => setBrandAutoSchedule(event.target.checked)} /><span><strong>Programación autónoma</strong><small>El agente crea copy y creativo, y los deja programados en Instagram en los días y la hora que elijas.</small></span></label>
-            {brandAutoSchedule && <><div className="posting-day-picker">{[{ label: "L", value: 1 }, { label: "M", value: 2 }, { label: "X", value: 3 }, { label: "J", value: 4 }, { label: "V", value: 5 }, { label: "S", value: 6 }, { label: "D", value: 0 }].map((day) => <button type="button" key={day.value} className={brandPostingDays.includes(day.value) ? "day-selected" : ""} aria-pressed={brandPostingDays.includes(day.value)} onClick={() => togglePostingDay(day.value)}>{day.label}</button>)}</div><label className="field-label" htmlFor="brand-time">Hora de publicación · Bogotá</label><input id="brand-time" className="field-control" type="time" value={brandPreferredTime} onChange={(event) => setBrandPreferredTime(event.target.value)} /><p>Al activarlo, se publicarán automáticamente las piezas que el agente programe. Se requiere una cuenta de Instagram conectada, una esencia completa y la API de OpenAI configurada.</p></>}
+          <div className="autopilot-card"><label className="autopilot-toggle"><input type="checkbox" checked={brandAutoSchedule} onChange={(event) => { setBrandAutoSchedule(event.target.checked); if (event.target.checked && !managedBrand.automationStatus) { setBrandPostingDays([0, 1, 2, 3, 4, 5, 6]); setBrandAutoStories(true); } }} /><span><strong>Piloto automático · 15 días</strong><small>Prepara el feed y las historias de esta marca, publica según el calendario y renueva el siguiente bloque sin nuevas órdenes.</small></span></label>
+            {brandAutoSchedule && <><div className="posting-day-picker" aria-label="Días de publicación">{[{ label: "L", value: 1 }, { label: "M", value: 2 }, { label: "X", value: 3 }, { label: "J", value: 4 }, { label: "V", value: 5 }, { label: "S", value: 6 }, { label: "D", value: 0 }].map((day) => <button type="button" key={day.value} className={brandPostingDays.includes(day.value) ? "day-selected" : ""} aria-pressed={brandPostingDays.includes(day.value)} onClick={() => togglePostingDay(day.value)}>{day.label}</button>)}</div><label className="field-label" htmlFor="brand-time">Feed · hora de Bogotá</label><input id="brand-time" className="field-control" type="time" value={brandPreferredTime} onChange={(event) => setBrandPreferredTime(event.target.value)} /><label className="autopilot-toggle field-gap"><input type="checkbox" checked={brandAutoStories} onChange={(event) => setBrandAutoStories(event.target.checked)} /><span><strong>Una historia de imagen por día seleccionado</strong><small>Una pieza vertical además de la publicación de feed.</small></span></label>{brandAutoStories && <><label className="field-label field-gap" htmlFor="brand-story-time">Historias · hora de Bogotá</label><input id="brand-story-time" className="field-control" type="time" value={brandStoryTime} onChange={(event) => setBrandStoryTime(event.target.value)} /></>}<p>Con todos los días seleccionados: 15 publicaciones de feed{brandAutoStories ? " y 15 historias" : ""} por ciclo. Facebook requiere la página vinculada y la opción de replicar activada. La generación utiliza tu saldo de API.</p></>}
+            <p>La primera programación comienza mañana. Se activa una sola vez: no necesitas volver a abrir la app. Los cambios de días y horarios se aplican al próximo ciclo; puedes editar cada publicación del ciclo actual.</p><p>Al desactivar y guardar, se pausa la generación y la publicación de las piezas pendientes del agente. Tus publicaciones manuales conservan su programación.</p>
+            {(agentConfigured === false || agentMissing.length > 0) && <div className="agent-error" role="status">Configuración pendiente: {agentMissing.length ? agentMissing.join(", ") : "revisa la conexión del agente y el almacenamiento"}. Completa la configuración para el funcionamiento autónomo.</div>}
+            {!connectedAccounts[managedBrand.name] && <div className="field-hint">Falta conectar Instagram para publicar esta marca.</div>}
+            <div className="automation-progress" aria-live="polite"><strong>{managedBrand.autoSchedule ? "Piloto habilitado en la configuración" : "Piloto pausado"}</strong>{managedBrand.automationStatus ? <><span>Ciclo: {managedBrand.automationStatus.cycleStart.slice(0, 10)} → {managedBrand.automationStatus.cycleEnd.slice(0, 10)}</span><progress max={Math.max(1, managedBrand.automationStatus.total)} value={managedBrand.automationStatus.planned} /><span>{managedBrand.automationStatus.planned} de {managedBrand.automationStatus.total} espacios atendidos (incluye omitidos) · {managedBrand.automationStatus.failed} con error</span>{managedBrand.automationStatus.lastError && <div className="agent-error">{managedBrand.automationStatus.lastError}</div>}</> : <span>Aún no hay un ciclo preparado. Guarda el perfil para que el agente lo procese cuando las conexiones estén listas.</span>}<button type="button" className="secondary-button" onClick={() => void reloadPosts()}>Actualizar estado</button></div>
           </div>
           <div className="brand-manager-actions"><button className="secondary-button" onClick={() => void toggleBrandActive(managedBrand)} disabled={brandBusy}>{managedBrand.active ? "Quitar marca" : "Restaurar marca"}</button><button className="primary-button" onClick={() => void saveBrandProfile()} disabled={brandBusy}>{brandBusy ? "Guardando…" : "Guardar perfil"}</button></div>
         </> : <div className="empty-state"><span>Agrega una marca para configurar su agente.</span></div>}
@@ -809,23 +845,23 @@ export default function Home() {
         <label className="field-label field-gap" htmlFor="agent-cta">Llamada a la acción <span className="field-hint">Opcional</span></label><input id="agent-cta" className="field-control" maxLength={140} value={agentCallToAction} onChange={(event) => setAgentCallToAction(event.target.value)} placeholder="Ej. Escríbenos para más información" />
         <div className="agent-cost-note"><Sparkles size={15} /><span>Al generar, la API de OpenAI crea un texto y una imagen. El uso puede generar cargos en tu cuenta de API.</span></div>
         {agentError && <div className="agent-error" role="alert">{agentError}</div>}
-        {agentConfigured === false && <div className="agent-error" role="status">Para activar el agente, agrega <code>OPENAI_API_KEY</code> como secreto en la configuración de este sitio.</div>}
+        {(agentConfigured === false || agentMissing.length > 0) && <div className="agent-error" role="status">Configuración pendiente: {agentMissing.length ? agentMissing.join(", ") : "revisa la conexión del agente y el almacenamiento"}.</div>}
         {agentDraft && agentPreviewUrl && <section className="agent-result"><Image className="media-preview" src={agentPreviewUrl} alt="Creativo generado para Instagram" width={1024} height={1024} unoptimized /><strong>{agentDraft.headline}</strong><p>{agentDraft.caption}</p><small>{agentDraft.visualConcept}</small><details><summary>Ver prompt visual</summary><p>{agentDraft.imagePrompt}</p></details><button className="primary-button agent-use" onClick={() => void applyAgentDraft()}><ImagePlus size={16} /> Editar y programar</button></section>}
         <div className="drawer-footer"><button className="secondary-button" onClick={() => void generateWithAgent()} disabled={agentGenerating || agentConfigured === false}><Sparkles size={15} />{agentGenerating ? "Creando…" : agentConfigured === false ? "Configura la API" : agentDraft ? "Generar otra versión" : "Generar texto e imagen"}</button></div>
       </aside></div>}
 
       {drawerOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar editor" onClick={() => setDrawerOpen(false)} /><aside className="composer-drawer" aria-label="Crear publicación">
-        <div className="drawer-header"><div><span className="drawer-kicker">NUEVO CONTENIDO</span><h2>Crear publicación</h2></div><button className="icon-button" aria-label="Cerrar" onClick={() => setDrawerOpen(false)}><X size={19} /></button></div>
-        <label className="field-label" htmlFor="post-brand">Cuenta de Instagram</label><select id="post-brand" className="field-control" value={brand} onChange={(event) => setBrand(event.target.value)}>{brands.map((item) => <option key={item.name}>{item.name}</option>)}</select><div className="field-hint">{isSelectedBrandConnected ? `Conectada como @${connectedAccounts[brand]}.` : "Esta cuenta todavía debe conectarse con Meta."}</div>
+        <div className="drawer-header"><div><span className="drawer-kicker">NUEVO CONTENIDO</span><h2>{editingPostId ? "Editar publicación" : "Crear publicación"}</h2></div><button className="icon-button" aria-label="Cerrar" onClick={() => setDrawerOpen(false)}><X size={19} /></button></div>
+        <label className="field-label" htmlFor="post-brand">Cuenta de Instagram</label><select id="post-brand" className="field-control" disabled={Boolean(editingPostId)} value={brand} onChange={(event) => setBrand(event.target.value)}>{brands.map((item) => <option key={item.name}>{item.name}</option>)}</select><div className="field-hint">{isSelectedBrandConnected ? `Conectada como @${connectedAccounts[brand]}.` : "Esta cuenta todavía debe conectarse con Meta."}</div>
         <label className="field-label field-gap" htmlFor="post-caption">Texto de la publicación</label><textarea id="post-caption" className="caption-control" maxLength={2200} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="¿Qué quieres compartir con tu comunidad?" /><div className="character-count">{caption.length} / 2.200 caracteres</div>
-        <label className="field-label field-gap" htmlFor="media-type">Formato</label><select id="media-type" className="field-control" value={mediaType} onChange={(event) => setMediaType(event.target.value)}><option>Imagen</option><option>Reel</option><option>Historia</option></select>
-        <input ref={mediaInput} type="file" accept={mediaType === "Reel" ? "video/mp4" : mediaType === "Historia" ? "image/jpeg,image/png,video/mp4" : "image/jpeg,image/png"} style={{ display: "none" }} onChange={(event) => selectMedia(event.target.files?.[0])} />
+        <label className="field-label field-gap" htmlFor="media-type">Formato</label><select id="media-type" className="field-control" value={mediaType} onChange={(event) => { if (event.target.value !== mediaType) clearSelectedMedia(); setMediaType(event.target.value); }}><option>Imagen</option><option>Reel</option><option>Historia</option></select>
+        <input ref={mediaInput} type="file" accept={mediaType === "Reel" ? "video/mp4" : "image/jpeg,image/png"} style={{ display: "none" }} onChange={(event) => selectMedia(event.target.files?.[0])} />
         <div className="media-drop" role="button" tabIndex={0} onClick={() => mediaInput.current?.click()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); mediaInput.current?.click(); } }}><span className="media-icon"><ImagePlus size={20} /></span><span><strong>{selectedMediaFile?.name ?? "Agrega una imagen o video"}</strong><small>{selectedMediaFile ? `${(selectedMediaFile.size / (1024 * 1024)).toFixed(1)} MB · ${uploadedMediaUrl ? "Cargado" : "Se cargará al guardar"}` : mediaType === "Reel" ? "Video MP4 · máximo 50 MB" : "JPG o PNG · máximo 15 MB antes de optimizar"}</small></span><ChevronRight size={16} /></div>
         {selectedMediaFile && <button type="button" className="text-button media-remove" onClick={clearSelectedMedia}>Quitar archivo</button>}
-        {mediaPreview && (selectedMediaFile?.type === "video/mp4" ? <video className="media-preview" src={mediaPreview} controls /> : <Image className="media-preview" src={mediaPreview} alt="Vista previa del contenido" width={1200} height={1200} unoptimized />)}
+        {mediaPreview && (mediaType === "Reel" ? <video className="media-preview" src={mediaPreview} controls /> : <Image className="media-preview" src={mediaPreview} alt="Vista previa del contenido" width={1200} height={1200} unoptimized />)}
         <label className="field-label field-gap" htmlFor="post-schedule">Fecha y hora</label><input id="post-schedule" type="datetime-local" className="field-control" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
-        <div className="schedule-hint"><Clock3 size={16} /><span>Las imágenes y los Reels se publican automáticamente a la hora elegida. Las Historias aún requieren publicación manual.</span></div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={() => void savePost("draft")} disabled={saving}>Guardar borrador</button><button className="primary-button" onClick={() => void savePost("scheduled")} disabled={saving}><Send size={16} />{uploadingMedia ? "Subiendo…" : saving ? "Guardando…" : "Programar"}</button></div>
+        <div className="schedule-hint"><Clock3 size={16} /><span>Las publicaciones y las historias de imagen se enviarán a la hora elegida, según la conexión y los permisos de cada cuenta.</span></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={() => void savePost("draft")} disabled={saving}>Guardar borrador</button><button className="primary-button" onClick={() => void savePost("scheduled")} disabled={saving}><Send size={16} />{uploadingMedia ? "Subiendo…" : saving ? "Guardando…" : editingPostId ? "Guardar cambios" : "Programar"}</button></div>
       </aside></div>}
 
       {toast && <div className="toast-message" role="status">{toast}<button aria-label="Cerrar aviso" onClick={() => setToast("")}><X size={15} /></button></div>}

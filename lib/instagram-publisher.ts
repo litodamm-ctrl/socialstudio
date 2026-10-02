@@ -2,6 +2,8 @@ import { decryptInstagramToken, encryptInstagramToken, graphUrl, instagramApiErr
 import { ensureFacebookTables } from "@/lib/facebook";
 import { ensureBrandRegistry } from "@/lib/brands";
 import { createR2PresignedUrl } from "@/lib/runtime";
+import { instagramMediaForm, publishFacebookPhotoStory, AUTOPILOT_ALLOWED_SQL, POST_SNAPSHOT_SQL } from "@/lib/meta-media";
+import { ensureAutopilotTables } from "@/lib/autopilot";
 
 const JOB_TABLE_SQL = `CREATE TABLE IF NOT EXISTS instagram_publish_jobs (
   post_id TEXT PRIMARY KEY,
@@ -16,6 +18,7 @@ const JOB_TABLE_SQL = `CREATE TABLE IF NOT EXISTS instagram_publish_jobs (
   facebook_status TEXT NOT NULL DEFAULT 'skipped' CHECK (facebook_status IN ('skipped', 'pending', 'publishing', 'published', 'failed')),
   facebook_media_id TEXT,
   facebook_error TEXT,
+  facebook_photo_id TEXT,
   updated_at INTEGER NOT NULL
 )`;
 
@@ -43,9 +46,31 @@ type DuePost = {
 
 type GraphResult = { id?: string; status_code?: string; success?: boolean; error?: { message?: string } };
 
+function snapshotBindings(post: DuePost) {
+  return [post.owner_id, new Date().toISOString(), post.brand, post.caption, post.media_type, post.media_url, post.scheduled_at];
+}
+class PublicationPaused extends Error {}
+
+async function recheckFacebook(db: D1Database, post: DuePost) {
+  const allowed = await db.prepare(`UPDATE instagram_publish_jobs SET updated_at = ?
+    WHERE post_id = ? AND facebook_status = 'publishing' AND EXISTS (
+      SELECT 1 FROM posts p JOIN brand_registry b ON b.owner_id = p.owner_id AND b.name = p.brand
+      WHERE ${POST_SNAPSHOT_SQL} AND b.auto_crosspost = 1 AND ${AUTOPILOT_ALLOWED_SQL}) RETURNING post_id`)
+    .bind(Date.now(), post.post_id, ...snapshotBindings(post)).first();
+  if (!allowed) throw new PublicationPaused("La publicación se pausó o cambió antes del envío.");
+}
+
+async function claimFacebook(db: D1Database, post: DuePost) {
+  return db.prepare(`UPDATE instagram_publish_jobs SET facebook_status = 'publishing', updated_at = ?
+    WHERE post_id = ? AND status = 'published' AND facebook_status = 'pending'
+    AND EXISTS (SELECT 1 FROM posts p JOIN brand_registry b ON b.owner_id = p.owner_id AND b.name = p.brand
+      WHERE ${POST_SNAPSHOT_SQL} AND b.auto_crosspost = 1 AND ${AUTOPILOT_ALLOWED_SQL}) RETURNING post_id`)
+    .bind(Date.now(), post.post_id, ...snapshotBindings(post)).first<{ post_id: string }>();
+}
+
 async function ensureJobTable(db: D1Database) {
   await db.prepare(JOB_TABLE_SQL).run();
-  for (const [column, definition] of [["facebook_status", "TEXT NOT NULL DEFAULT 'skipped'"], ["facebook_media_id", "TEXT"], ["facebook_error", "TEXT"]]) {
+  for (const [column, definition] of [["facebook_status", "TEXT NOT NULL DEFAULT 'skipped'"], ["facebook_media_id", "TEXT"], ["facebook_error", "TEXT"], ["facebook_photo_id", "TEXT"]]) {
     try { await db.prepare(`ALTER TABLE instagram_publish_jobs ADD COLUMN ${column} ${definition}`).run(); }
     catch (error) { if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error; }
   }
@@ -88,16 +113,14 @@ async function fail(db: D1Database, postId: string, error: string) {
 async function processOne(db: D1Database, bucket: R2Bucket | undefined, post: DuePost, graphVersion = "v26.0") {
   const now = Date.now();
   const lock = await db.prepare(
-    "UPDATE instagram_publish_jobs SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ? WHERE post_id = ? AND status = 'pending' AND next_attempt_at <= ? RETURNING post_id",
-  ).bind(now + 5 * 60_000, now, post.post_id, now).first<{ post_id: string }>();
+    `UPDATE instagram_publish_jobs SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
+    WHERE post_id = ? AND status = 'pending' AND next_attempt_at <= ?
+    AND EXISTS (SELECT 1 FROM posts p WHERE ${POST_SNAPSHOT_SQL} AND ${AUTOPILOT_ALLOWED_SQL}) RETURNING post_id`,
+  ).bind(now + 5 * 60_000, now, post.post_id, now, ...snapshotBindings(post)).first<{ post_id: string }>();
   if (!lock) return;
 
   if (!post.media_url || !bucket) {
     await fail(db, post.post_id, "Añade una imagen o un video antes de programar la publicación.");
-    return;
-  }
-  if (post.media_type === "Historia") {
-    await fail(db, post.post_id, "La publicación automática de Historias aún no está habilitada. Cambia el formato o publícala manualmente.");
     return;
   }
 
@@ -108,22 +131,15 @@ async function processOne(db: D1Database, bucket: R2Bucket | undefined, post: Du
     const object = await bucket.head(`media/${objectId}`);
     if (!object || object.customMetadata?.ownerId !== post.owner_id) throw new Error("El archivo adjunto ya no está disponible.");
     const contentType = object.httpMetadata?.contentType;
-    if (post.media_type === "Imagen" && contentType !== "image/jpeg") throw new Error("Para una publicación de imagen, adjunta un archivo JPG.");
+    if (!["Imagen", "Historia", "Reel"].includes(post.media_type)) throw new Error("Formato de publicación no compatible.");
+    if (["Imagen", "Historia"].includes(post.media_type) && contentType !== "image/jpeg") throw new Error("Para una imagen o historia automática, adjunta un archivo JPG.");
     if (post.media_type === "Reel" && contentType !== "video/mp4") throw new Error("Para un Reel, adjunta un video MP4.");
 
     const token = await getAccessToken(db, post);
     let containerId = post.container_id;
     if (!containerId) {
       const mediaUrl = await createR2PresignedUrl("GET", `media/${objectId}`, {}, 7200);
-      const form = new URLSearchParams();
-      if (post.media_type === "Reel") {
-        form.set("media_type", "REELS");
-        form.set("video_url", mediaUrl);
-        form.set("share_to_feed", "true");
-      } else {
-        form.set("image_url", mediaUrl);
-      }
-      form.set("caption", post.caption);
+      const form = instagramMediaForm(post.media_type, mediaUrl, post.caption);
       const created = await graphJson(await fetch(graphUrl(`${post.instagram_user_id}/media`), {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
@@ -148,9 +164,16 @@ async function processOne(db: D1Database, bucket: R2Bucket | undefined, post: Du
       return;
     }
 
+    const sendLock = await db.prepare(`UPDATE instagram_publish_jobs SET status = 'publishing', updated_at = ?
+      WHERE post_id = ? AND status = 'processing' AND lease_until = ?
+      AND EXISTS (SELECT 1 FROM posts p WHERE ${POST_SNAPSHOT_SQL} AND ${AUTOPILOT_ALLOWED_SQL}) RETURNING post_id`)
+      .bind(Date.now(), post.post_id, now + 5 * 60_000, ...snapshotBindings(post)).first<{ post_id: string }>();
+    if (!sendLock) {
+      await db.prepare("UPDATE instagram_publish_jobs SET status = 'pending', lease_until = 0, updated_at = ? WHERE post_id = ? AND status = 'processing' AND lease_until = ?")
+        .bind(Date.now(), post.post_id, now + 5 * 60_000).run();
+      return;
+    }
     stage = "publish";
-    await db.prepare("UPDATE instagram_publish_jobs SET status = 'publishing', updated_at = ? WHERE post_id = ?")
-      .bind(Date.now(), post.post_id).run();
     const form = new URLSearchParams({ creation_id: containerId });
     const published = await graphJson(await fetch(graphUrl(`${post.instagram_user_id}/media_publish`), {
       method: "POST",
@@ -162,12 +185,17 @@ async function processOne(db: D1Database, bucket: R2Bucket | undefined, post: Du
       .bind(published.id, post.auto_crosspost ? "pending" : "skipped", Date.now(), post.post_id).run();
     if (post.auto_crosspost) {
       try {
-        await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'publishing', updated_at = ? WHERE post_id = ?")
-          .bind(Date.now(), post.post_id).run();
+        const facebookLock = await claimFacebook(db, post);
+        if (!facebookLock) return;
         const facebookMediaId = await publishToFacebook(db, bucket, post, graphVersion);
         await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'published', facebook_media_id = ?, facebook_error = NULL, updated_at = ? WHERE post_id = ?")
           .bind(facebookMediaId, Date.now(), post.post_id).run();
       } catch (error) {
+        if (error instanceof PublicationPaused) {
+          await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'pending', updated_at = ? WHERE post_id = ? AND facebook_status = 'publishing'")
+            .bind(Date.now(), post.post_id).run();
+          return;
+        }
         const facebookError = error instanceof Error ? error.message.slice(0, 300) : "No se pudo publicar en Facebook.";
         await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'failed', facebook_error = ?, updated_at = ? WHERE post_id = ?")
           .bind(facebookError, Date.now(), post.post_id).run();
@@ -205,7 +233,21 @@ async function publishToFacebook(db: D1Database, bucket: R2Bucket | undefined, p
   if (!object || object.customMetadata?.ownerId !== post.owner_id) throw new Error("El archivo de esta marca no está disponible.");
   const mediaUrl = await createR2PresignedUrl("GET", `media/${objectId}`, {}, 7200);
 
+  if (post.media_type === "Historia") {
+    if (object.httpMetadata?.contentType !== "image/jpeg") throw new Error("Las historias automáticas requieren una imagen JPG.");
+    const saved = await db.prepare("SELECT facebook_photo_id FROM instagram_publish_jobs WHERE post_id = ?")
+      .bind(post.post_id).first<{ facebook_photo_id: string | null }>();
+    return publishFacebookPhotoStory({ pageId: account.page_id, token, graphVersion, mediaUrl, photoId: saved?.facebook_photo_id,
+      beforePublish: () => recheckFacebook(db, post),
+      savePhotoId: async (photoId) => {
+        await db.prepare("UPDATE instagram_publish_jobs SET facebook_photo_id = ?, updated_at = ? WHERE post_id = ?")
+          .bind(photoId, Date.now(), post.post_id).run();
+      },
+    });
+  }
+
   if (post.media_type === "Imagen") {
+    await recheckFacebook(db, post);
     const form = new URLSearchParams({ url: mediaUrl, message: post.caption, access_token: token });
     const result = await facebookJson(await fetch(`https://graph.facebook.com/${graphVersion}/${account.page_id}/photos`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form,
@@ -237,6 +279,7 @@ async function publishToFacebook(db: D1Database, bucket: R2Bucket | undefined, p
   finishUrl.searchParams.set("video_id", videoId);
   finishUrl.searchParams.set("description", post.caption);
   finishUrl.searchParams.set("access_token", token);
+  await recheckFacebook(db, post);
   const finished = await facebookJson(await fetch(finishUrl, { method: "POST" }));
   if (finished.success === false) throw new Error("Facebook no confirmó la publicación del Reel.");
   return videoId;
@@ -253,7 +296,11 @@ export async function processDueInstagramPublications(bindings: PublisherBinding
   if (!db) return;
   await ensureBrandRegistry(db);
   await ensureJobTable(db);
+  await ensureAutopilotTables(db);
   const now = Date.now();
+  // A timed-out final send is ambiguous. Never automatically send it again.
+  await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'failed', facebook_error = 'El envío se interrumpió. Revisa Facebook antes de reintentar.', updated_at = ? WHERE facebook_status = 'publishing' AND updated_at < ?")
+    .bind(now, now - 15 * 60_000).run();
   await db.prepare("UPDATE instagram_publish_jobs SET status = 'failed', lease_until = 0, last_error = 'El envío se interrumpió. Revisa Instagram antes de reintentar.', updated_at = ? WHERE status = 'publishing' AND lease_until < ?")
     .bind(now, now).run();
   await db.prepare("UPDATE instagram_publish_jobs SET status = 'pending', lease_until = 0, updated_at = ? WHERE status = 'processing' AND lease_until < ?")
@@ -261,6 +308,16 @@ export async function processDueInstagramPublications(bindings: PublisherBinding
   await db.prepare(`INSERT OR IGNORE INTO instagram_publish_jobs (post_id, owner_id, status, attempts, next_attempt_at, updated_at)
     SELECT id, owner_id, 'pending', 0, 0, ? FROM posts WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ?`)
     .bind(now, new Date(now).toISOString()).run();
+  await db.prepare(`UPDATE instagram_publish_jobs SET status = 'failed', lease_until = 0,
+    last_error = 'Publicación automática vencida: revisa y reprograma para evitar publicar contenido atrasado.', updated_at = ?
+    WHERE status = 'pending' AND EXISTS (SELECT 1 FROM posts p JOIN autopilot_slots s ON s.post_id = p.id AND s.owner_id = p.owner_id
+      WHERE p.id = instagram_publish_jobs.post_id AND p.scheduled_at < ?)`)
+    .bind(now, new Date(now - 86_400_000).toISOString()).run();
+  await db.prepare(`UPDATE instagram_publish_jobs SET facebook_status = 'failed',
+    facebook_error = 'Publicación automática vencida: revisa antes de reprogramar Facebook.', updated_at = ?
+    WHERE facebook_status = 'pending' AND EXISTS (SELECT 1 FROM posts p JOIN autopilot_slots s ON s.post_id = p.id AND s.owner_id = p.owner_id
+      WHERE p.id = instagram_publish_jobs.post_id AND p.scheduled_at < ?)`)
+    .bind(now, new Date(now - 86_400_000).toISOString()).run();
 
   const result = await db.prepare(`SELECT j.post_id, j.owner_id, j.attempts, j.container_id,
       p.brand, p.caption, p.media_type, p.media_url, p.scheduled_at,
@@ -269,26 +326,30 @@ export async function processDueInstagramPublications(bindings: PublisherBinding
     JOIN posts p ON p.id = j.post_id
     LEFT JOIN instagram_accounts a ON a.owner_id = p.owner_id AND a.brand = p.brand
     LEFT JOIN brand_registry b ON b.owner_id = p.owner_id AND b.name = p.brand
-    WHERE j.status = 'pending' AND j.next_attempt_at <= ?
+    WHERE j.status = 'pending' AND j.next_attempt_at <= ? AND p.status = 'scheduled' AND ${AUTOPILOT_ALLOWED_SQL}
     ORDER BY p.scheduled_at ASC LIMIT 5`).bind(now).all<DuePost>();
 
   for (const post of result.results ?? []) await processOne(db, bindings.BUCKET, post, bindings.META_GRAPH_VERSION);
 
-  const facebookRetries = await db.prepare(`SELECT p.id AS post_id, p.owner_id, p.brand, p.caption, p.media_type, p.media_url,
+  const facebookRetries = await db.prepare(`SELECT p.id AS post_id, p.owner_id, p.brand, p.caption, p.media_type, p.media_url, p.scheduled_at,
       0 AS attempts, 0 AS auto_crosspost, j.published_media_id, j.updated_at
     FROM instagram_publish_jobs j JOIN posts p ON p.id = j.post_id
     JOIN brand_registry b ON b.owner_id = p.owner_id AND b.name = p.brand
-    WHERE j.status = 'published' AND j.facebook_status = 'pending' AND b.auto_crosspost = 1
+    WHERE j.status = 'published' AND j.facebook_status = 'pending' AND b.auto_crosspost = 1 AND ${AUTOPILOT_ALLOWED_SQL}
     ORDER BY j.updated_at ASC LIMIT 5`).all<DuePost & { published_media_id: string | null; updated_at: number }>();
   for (const post of facebookRetries.results ?? []) {
-    const facebookLock = await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'publishing', updated_at = ? WHERE post_id = ? AND facebook_status = 'pending' RETURNING post_id")
-      .bind(Date.now(), post.post_id).first<{ post_id: string }>();
+    const facebookLock = await claimFacebook(db, post);
     if (!facebookLock) continue;
     try {
       const facebookMediaId = await publishToFacebook(db, bindings.BUCKET, post, bindings.META_GRAPH_VERSION || "v26.0");
       await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'published', facebook_media_id = ?, facebook_error = NULL, updated_at = ? WHERE post_id = ?")
         .bind(facebookMediaId, Date.now(), post.post_id).run();
     } catch (error) {
+      if (error instanceof PublicationPaused) {
+        await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'pending', updated_at = ? WHERE post_id = ? AND facebook_status = 'publishing'")
+          .bind(Date.now(), post.post_id).run();
+        continue;
+      }
       const message = error instanceof Error ? error.message.slice(0, 300) : "No se pudo publicar en Facebook.";
       await db.prepare("UPDATE instagram_publish_jobs SET facebook_status = 'failed', facebook_error = ?, updated_at = ? WHERE post_id = ?")
         .bind(message, Date.now(), post.post_id).run();

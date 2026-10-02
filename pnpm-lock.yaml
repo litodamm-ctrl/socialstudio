@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      sharp:
+        specifier: 0.35.4
+        version: 0.35.4(@types/node@22.19.19)
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@date-fns/tz@1.5.0)(@types/react@19.2.14)(date-fns@4.4.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

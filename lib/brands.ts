@@ -20,8 +20,10 @@ export const BRAND_REGISTRY_SQL = `CREATE TABLE IF NOT EXISTS brand_registry (
   drive_refresh_token TEXT,
   auto_schedule INTEGER NOT NULL DEFAULT 0,
   auto_crosspost INTEGER NOT NULL DEFAULT 0,
-  posting_days TEXT NOT NULL DEFAULT '[2,4,6]',
+  posting_days TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
   preferred_time TEXT NOT NULL DEFAULT '18:00',
+  story_time TEXT NOT NULL DEFAULT '09:00',
+  auto_stories INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   UNIQUE(owner_id, name)
@@ -29,6 +31,10 @@ export const BRAND_REGISTRY_SQL = `CREATE TABLE IF NOT EXISTS brand_registry (
 
 export async function ensureBrandRegistry(db: D1Database) {
   await db.prepare(BRAND_REGISTRY_SQL).run();
+  for (const [column, definition] of [["story_time", "TEXT NOT NULL DEFAULT '09:00'"], ["auto_stories", "INTEGER NOT NULL DEFAULT 1"]]) {
+    try { await db.prepare(`ALTER TABLE brand_registry ADD COLUMN ${column} ${definition}`).run(); }
+    catch (error) { if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error; }
+  }
   try { await db.prepare("ALTER TABLE brand_registry ADD COLUMN auto_crosspost INTEGER NOT NULL DEFAULT 0").run(); }
   catch (error) { if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error; }
   await db.prepare(`CREATE TABLE IF NOT EXISTS brand_assets (

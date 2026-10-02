@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   try {
     await ensureInstagramPublishJobs(env.DB);
     const result = await env.DB.prepare(
-      "SELECT p.id, p.brand, p.caption, p.media_type, p.media_url, p.scheduled_at, p.status, p.created_at, j.status AS publication_status, j.last_error AS publication_error, j.facebook_status, j.facebook_error FROM posts p LEFT JOIN instagram_publish_jobs j ON j.post_id = p.id WHERE p.owner_id = ? ORDER BY CASE WHEN p.scheduled_at IS NULL THEN 1 ELSE 0 END, p.scheduled_at ASC, p.created_at DESC LIMIT 100",
+      "SELECT p.id, p.brand, p.caption, p.media_type, p.media_url, p.scheduled_at, p.status, p.created_at, j.status AS publication_status, j.last_error AS publication_error, j.facebook_status, j.facebook_error FROM posts p LEFT JOIN instagram_publish_jobs j ON j.post_id = p.id WHERE p.owner_id = ? ORDER BY CASE WHEN p.status = 'published' THEN 2 WHEN p.scheduled_at IS NULL THEN 1 ELSE 0 END, CASE WHEN p.status <> 'published' THEN p.scheduled_at END ASC, p.created_at DESC LIMIT 1000",
     ).bind(ownerId).all<PostRow>();
     return Response.json({ posts: (result.results ?? []).map(toPost) });
   } catch (error) {
@@ -88,6 +88,7 @@ export async function POST(request: Request) {
   if (requestedStatus === "scheduled" && (!scheduledAt || !Number.isFinite(Date.parse(scheduledAt)) || Date.parse(scheduledAt) <= Date.now())) {
     return Response.json({ error: "Elige una fecha futura para agregarla al calendario." }, { status: 400 });
   }
+  if (requestedStatus === "scheduled" && !mediaUrl) return Response.json({ error: "Adjunta el archivo antes de programar." }, { status: 400 });
 
   if (mediaUrl) {
     const mediaMatch = mediaUrl.match(/^\/api\/media\/([0-9a-f-]{36})$/i);
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
       const object = await env.BUCKET.head(`media/${mediaMatch[1]}`);
       if (!object || object.customMetadata?.ownerId !== ownerId) return Response.json({ error: "El archivo adjunto no está disponible." }, { status: 400 });
       const contentType = object.httpMetadata?.contentType ?? "";
-      const formatMatches = mediaType === "Imagen" ? contentType === "image/jpeg" : mediaType === "Reel" ? contentType === "video/mp4" : ["image/jpeg", "video/mp4"].includes(contentType);
+      const formatMatches = mediaType === "Reel" ? contentType === "video/mp4" : contentType === "image/jpeg";
       if (!formatMatches) return Response.json({ error: mediaType === "Reel" ? "Para un Reel, adjunta un video MP4." : "El archivo no coincide con el formato elegido." }, { status: 400 });
     } catch (error) {
       console.error("Unable to validate Instagram media", error instanceof Error ? error.message : "unknown error");

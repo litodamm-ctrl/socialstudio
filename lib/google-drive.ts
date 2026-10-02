@@ -1,3 +1,5 @@
+import { rotateReferences } from "@/lib/creative-references";
+
 type DriveFile = { id: string; name: string; mimeType: string };
 type DriveContent = Array<Record<string, string>>;
 
@@ -8,6 +10,7 @@ export async function loadGoogleDriveMaterials(
   clientId: string | undefined,
   clientSecret: string | undefined,
   decryptToken: (token: string) => Promise<string>,
+  rotationSeed = new Date().toISOString().slice(0, 10),
 ): Promise<{ text: string; content: DriveContent }> {
   if (!clientId || !clientSecret) return { text: "", content: [] };
   const brand = await db.prepare("SELECT drive_folder_id, drive_refresh_token FROM brand_registry WHERE owner_id = ? AND id = ? AND active = 1")
@@ -24,18 +27,25 @@ export async function loadGoogleDriveMaterials(
   if (!tokenResponse.ok || !tokenData.access_token) throw new Error(tokenData.error_description ?? "No se pudo renovar el acceso de Google Drive.");
   const listUrl = new URL("https://www.googleapis.com/drive/v3/files");
   listUrl.searchParams.set("q", `'${brand.drive_folder_id}' in parents and trashed = false`);
-  listUrl.searchParams.set("pageSize", "5");
+  listUrl.searchParams.set("pageSize", "100");
   listUrl.searchParams.set("orderBy", "modifiedTime desc");
-  listUrl.searchParams.set("fields", "files(id,name,mimeType)");
+  listUrl.searchParams.set("fields", "nextPageToken,files(id,name,mimeType)");
   listUrl.searchParams.set("supportsAllDrives", "true");
   listUrl.searchParams.set("includeItemsFromAllDrives", "true");
-  const filesResponse = await fetch(listUrl, { signal: AbortSignal.timeout(10_000), headers: { Authorization: `Bearer ${tokenData.access_token}` } });
-  const filesData = await filesResponse.json() as { files?: DriveFile[]; error?: { message?: string } };
-  if (!filesResponse.ok) throw new Error(filesData.error?.message ?? "No se pudieron leer los archivos de Drive.");
+  const files: DriveFile[] = [];
+  for (let page = 0; page < 3; page++) {
+    const filesResponse = await fetch(listUrl, { signal: AbortSignal.timeout(10_000), headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+    const filesData = await filesResponse.json() as { files?: DriveFile[]; nextPageToken?: string; error?: { message?: string } };
+    if (!filesResponse.ok) throw new Error(filesData.error?.message ?? "No se pudieron leer los archivos de Drive.");
+    files.push(...(filesData.files ?? []));
+    if (!filesData.nextPageToken) break;
+    listUrl.searchParams.set("pageToken", filesData.nextPageToken);
+  }
+  const supported = files.filter(file => file.mimeType.startsWith("text/") || ["application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet", "application/pdf", "image/png", "image/jpeg", "image/webp"].includes(file.mimeType));
   const content: DriveContent = [];
   const notes: string[] = [];
   let totalBytes = 0;
-  for (const file of filesData.files ?? []) {
+  for (const file of rotateReferences(supported, rotationSeed, 5)) {
     if (totalBytes > 9 * 1024 * 1024) break;
     try {
       if (file.mimeType === "application/vnd.google-apps.document" || file.mimeType === "application/vnd.google-apps.spreadsheet") {
@@ -49,7 +59,7 @@ export async function loadGoogleDriveMaterials(
         url.searchParams.set("alt", "media");
         const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { Authorization: `Bearer ${tokenData.access_token}` } });
         if (!response.ok) continue;
-        const bytes = await readBytes(response, 5 * 1024 * 1024);
+        const bytes = await readBytes(response, Math.min(5 * 1024 * 1024, 10 * 1024 * 1024 - totalBytes));
         if (!bytes) continue;
         totalBytes += bytes.length;
         const base64 = bytesToBase64(bytes);
@@ -69,19 +79,26 @@ export async function loadGoogleDriveMaterials(
 }
 
 async function readText(response: Response, maxBytes: number) {
-  const bytes = await readBytes(response, maxBytes);
+  const bytes = await readBytes(response, maxBytes, true);
   return bytes ? new TextDecoder().decode(bytes).replace(/\s+/g, " ").trim() : "";
 }
 
-async function readBytes(response: Response, maxBytes: number) {
+async function readBytes(response: Response, maxBytes: number, truncate = false) {
   if (!response.body) return null;
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (total < maxBytes) {
+  while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    const part = value.subarray(0, maxBytes - total);
+    if (value.length > maxBytes - total) {
+      await reader.cancel();
+      if (!truncate) return null;
+      chunks.push(value.subarray(0, maxBytes - total));
+      total = maxBytes;
+      break;
+    }
+    const part = value;
     chunks.push(part); total += part.length;
     if (part.length !== value.length) break;
   }
