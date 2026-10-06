@@ -11,6 +11,7 @@ import {
 } from "date-fns";
 import { es } from "date-fns/locale";
 import Image from "next/image";
+import { prepareDriveConnection } from "@/lib/drive-connect-client";
 import {
   Camera,
   CalendarDays,
@@ -556,10 +557,14 @@ export default function Home() {
     window.location.href = `/api/meta/facebook/connect?brand=${encodeURIComponent(accountBrand)}`;
   }
 
-  function connectBrandDrive(id: string) {
-    // Starting Google's OAuth flow must navigate the top-level page.
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    window.location.href = `/api/brands/${id}/drive/connect`;
+  async function connectBrandDrive(id: string) {
+    setBrandBusy(true);
+    try {
+      const url = await prepareDriveConnection(id, brandDrive);
+      window.location.assign(url);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "No se pudo conectar Google Drive.");
+    } finally { setBrandBusy(false); }
   }
 
   function editBrand(item: Brand) {
@@ -827,7 +832,7 @@ export default function Home() {
             <button type="button" className="secondary-button brand-website-add" disabled={brandBusy || brandWebsites.length >= 10} onClick={() => setBrandWebsites(current => current.length < 10 ? [...current, ""] : current)}><Plus size={14} /> Agregar sitio web <span>{brandWebsites.length}/10</span></button>
           </div>
           <div className="field-hint">Agrega hasta 10 páginas públicas con información e imágenes de tus proyectos. El agente consultará una fuente por pieza, sin mezclar precios, beneficios ni imágenes de proyectos distintos. Usa enlaces directos al proyecto y guarda los cambios.</div>
-          <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Guarda el enlace de la carpeta y conecta Google para que el agente lea Docs, PDFs, imágenes y textos recientes.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" disabled={!managedBrand.driveFolderUrl || brandBusy} onClick={() => connectBrandDrive(managedBrand.id)}><Link2 size={13} /> Conectar Google Drive</button>}<span>La conexión solo da acceso de lectura.</span></div>
+          <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Pega el enlace de la carpeta y pulsa Conectar Google Drive. Guardaremos la carpeta antes de abrir Google.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" type="button" disabled={brandBusy} onClick={() => void connectBrandDrive(managedBrand.id)}><Link2 size={13} /> {brandBusy ? "Conectando…" : "Conectar Google Drive"}</button>}<span>La conexión solo da acceso de lectura.</span></div>
           <div className="facebook-brand-box"><div><strong>Facebook</strong><small>{connectedFacebookPages[managedBrand.name] ? `Página vinculada: ${connectedFacebookPages[managedBrand.name]}` : "Vincula la Página asociada a Instagram"}</small></div>{!connectedFacebookPages[managedBrand.name] && <button className="connect-mini" disabled={!connectedAccounts[managedBrand.name]} onClick={() => connectFacebookAccount(managedBrand.name)}><Link2 size={13} /> Vincular</button>}<label className="autopilot-toggle facebook-crosspost-toggle"><input type="checkbox" checked={brandAutoCrosspost} disabled={!connectedFacebookPages[managedBrand.name]} onChange={(event) => setBrandAutoCrosspost(event.target.checked)} /><span><strong>Replicar en Facebook al publicar en Instagram</strong><small>Requiere Facebook Login y una Página vinculada a esta cuenta de Instagram.</small></span></label></div>
           <div className="field-label field-gap">Recursos de marca <span className="field-hint">Logos, brochures, imágenes de referencia y documentos</span></div>
           <input ref={brandAssetInput} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown" hidden onChange={(event) => void uploadBrandAsset(event.target.files?.[0])} />
