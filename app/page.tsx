@@ -161,6 +161,8 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [postsOpen, setPostsOpen] = useState(false);
+  const [postsBrandFilter, setPostsBrandFilter] = useState("");
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentObjective, setAgentObjective] = useState("Ventas");
   const [agentBrief, setAgentBrief] = useState("");
@@ -659,6 +661,21 @@ export default function Home() {
     finally { setBrandBusy(false); }
   }
 
+  async function restoreBrandCalendar() {
+    if (!managedBrand) return;
+    const username = connectedAccounts[managedBrand.name];
+    if (!username || !window.confirm(`Recuperar el calendario de ${managedBrand.name} para @${username}: se programarán los borradores existentes del agente en sus fechas futuras originales y se reactivarán los espacios pendientes cancelados al cambiar la conexión. No se duplican ni regeneran las piezas guardadas. Los pendientes nuevos pueden consumir créditos de API.`)) return;
+    setBrandBusy(true);
+    try {
+      const response = await fetch(`/api/brands/${managedBrand.id}/autopilot/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username }) });
+      const data = await response.json() as { restored?: number; retried?: number; error?: string };
+      if (!response.ok) throw new Error(data.error || "No se pudo recuperar el calendario.");
+      await reloadPosts();
+      setToast(`${data.restored ?? 0} creativos recuperados en el calendario; ${data.retried ?? 0} espacios en cola para generar. Las fechas vencidas permanecen como borradores.`);
+    } catch (error) { setToast(error instanceof Error ? error.message : "No se pudo recuperar el calendario."); }
+    finally { setBrandBusy(false); }
+  }
+
   async function checkBrandWebsites() {
     setBrandBusy(true);
     setWebsiteChecks([]);
@@ -767,7 +784,7 @@ export default function Home() {
         <div className="side-label">GESTIÓN</div>
         <nav className="primary-nav" aria-label="Navegación principal">
           {navItems.map(({ label, icon: Icon, active }) => (
-            <button key={label} className={`nav-item ${active ? "nav-active" : ""}`} onClick={() => label !== "Calendario" && setToast("Esta sección estará disponible en la siguiente etapa.")}>
+            <button key={label} className={`nav-item ${active ? "nav-active" : ""}`} onClick={() => { if (label === "Publicaciones") { setPostsOpen(true); setMobileMenu(false); } else if (label !== "Calendario") setToast("Esta sección estará disponible en la siguiente etapa."); }}>
               <Icon size={18} strokeWidth={1.9} /><span>{label}</span>{label === "Publicaciones" && <span className="nav-count">{posts.length}</span>}
             </button>
           ))}
@@ -856,7 +873,7 @@ export default function Home() {
 
           <section className="lower-grid">
             <div className="queue-panel">
-              <div className="panel-heading"><div><h2>Próximas publicaciones</h2><p>Contenido guardado para tus marcas</p></div><button className="text-button" onClick={() => setToast("Todas las publicaciones ya aparecen en tu calendario.")}>Ver calendario <ChevronRight size={15} /></button></div>
+              <div className="panel-heading"><div><h2>Próximas publicaciones</h2><p>Contenido guardado para tus marcas</p></div><button className="text-button" onClick={() => setPostsOpen(true)}>Ver todas <ChevronRight size={15} /></button></div>
               {loading ? <div className="empty-state"><span className="loader-dot" />Cargando calendario…</div> : loadError ? <div className="empty-state empty-error"><p>{loadError}</p><button onClick={() => void reloadPosts()}>Intentar de nuevo</button></div> : scheduledPosts.length === 0 && unscheduledPosts.length === 0 ? <div className="empty-state"><div className="empty-icon"><CalendarDays size={21} /></div><strong>Tu calendario está listo</strong><span>Programa la primera pieza para ver aquí tus próximas publicaciones.</span><button className="empty-cta" onClick={openComposer}><Plus size={16} /> Crear publicación</button></div> : <div className="queue-list">
                 {[...scheduledPosts, ...unscheduledPosts].slice(0, 5).map((post) => { const account = brandFor(post.brand, brands); return <div className="queue-item" key={post.id}><span className="account-dot queue-avatar" style={{ background: account.color }}>{account.initials}</span><div className="queue-copy"><strong>{account.name}</strong><span>{post.caption}</span></div><div className="queue-date">{post.scheduledAt ? format(new Date(post.scheduledAt), "d MMM · h:mm a", { locale: es }) : "Sin fecha"}<small>{statusLabel(post.status)}{post.facebookStatus === "published" ? " · Facebook" : post.facebookStatus === "failed" ? " · Error en Facebook" : ""}</small></div>{post.status !== "published" && post.status !== "publishing" && <button className="plain-icon queue-more" aria-label="Editar publicación" onClick={() => editPost(post)}><Settings2 size={16} /></button>}{post.status !== "published" && <button className="plain-icon queue-more" aria-label={post.status === "scheduled" ? "Cancelar publicación" : "Eliminar elemento"} title={post.publicationError ?? post.facebookError ?? undefined} onClick={() => void removePost(post)}><Trash2 size={16} /></button>}{post.status === "published" && post.facebookStatus === "failed" && <button className="plain-icon queue-more" aria-label="Reintentar publicación en Facebook" title={post.facebookError ?? "Reintentar Facebook"} onClick={() => void retryFacebookPost(post)}><RefreshCw size={15} /></button>}</div>; })}
               </div>}
@@ -872,6 +889,18 @@ export default function Home() {
           <footer className="bottom-note"><MessageSquareText size={15} /><span>{connectedBrands.length ? "La publicación programada admite feed, Reels e historias de imagen, con conexiones y permisos vigentes." : "Lo que guardes aquí queda como planificación. Conecta Instagram para activar la publicación automática."}</span></footer>
         </div>
       </section>
+
+      {postsOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar publicaciones" onClick={() => setPostsOpen(false)} /><aside className="composer-drawer brand-manager-drawer" aria-label="Todas las publicaciones">
+        <div className="drawer-header"><div><span className="drawer-kicker">CONTENIDO GUARDADO</span><h2>Publicaciones y borradores</h2></div><button className="icon-button" aria-label="Cerrar lista" onClick={() => setPostsOpen(false)}><X size={19} /></button></div>
+        <label className="field-label" htmlFor="posts-brand-filter">Filtrar por marca</label><select id="posts-brand-filter" className="field-control" value={postsBrandFilter} onChange={event => setPostsBrandFilter(event.target.value)}><option value="">Todas las marcas</option>{brands.map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
+        <p>{posts.filter(post => !postsBrandFilter || post.brand === postsBrandFilter).length} piezas guardadas. Los borradores sin fecha no aparecen en el calendario.</p>
+        {posts.filter(post => !postsBrandFilter || post.brand === postsBrandFilter).map(post => <article className="brand-add-box" key={post.id}>
+          <strong>{post.brand} · {post.mediaType} · {statusLabel(post.status)}</strong>
+          {post.mediaUrl && post.mediaType !== "Reel" && <img src={post.mediaUrl} alt={`Creativo de ${post.brand}`} loading="lazy" style={{ width: "100%", maxHeight: 260, objectFit: "contain", marginTop: 12 }} />}
+          <p style={{ whiteSpace: "pre-wrap" }}>{post.caption}</p><p>{post.scheduledAt ? format(new Date(post.scheduledAt), "d MMM · h:mm a", { locale: es }) : "Sin fecha"}</p>
+          {post.status !== "published" && post.status !== "publishing" && <button className="secondary-button" onClick={() => { setPostsOpen(false); editPost(post); }}>Editar publicación</button>}
+        </article>)}
+      </aside></div>}
 
       {brandManagerOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar gestión de marcas" onClick={() => setBrandManagerOpen(false)} /><aside className="composer-drawer brand-manager-drawer" aria-label="Gestionar marcas y agentes">
         <div className="drawer-header"><div><span className="drawer-kicker">IDENTIDAD Y AUTOMATIZACIÓN</span><h2>Marcas y agentes</h2></div><button className="icon-button" aria-label="Cerrar" onClick={() => setBrandManagerOpen(false)}><X size={19} /></button></div>
@@ -903,7 +932,7 @@ export default function Home() {
             <p>La primera programación comienza mañana. Se activa una sola vez: no necesitas volver a abrir la app. Los cambios de días y horarios se aplican al próximo ciclo; puedes editar cada publicación del ciclo actual.</p><p>Al desactivar y guardar, se pausa la generación y la publicación de las piezas pendientes del agente. Tus publicaciones manuales conservan su programación.</p>
             {(agentConfigured === false || agentMissing.length > 0) && <div className="agent-error" role="status">Configuración pendiente: {agentMissing.length ? agentMissing.join(", ") : "revisa la conexión del agente y el almacenamiento"}. Completa la configuración para el funcionamiento autónomo.</div>}
             {!connectedAccounts[managedBrand.name] && <div className="field-hint">Falta conectar Instagram para publicar esta marca.</div>}
-            <div className="automation-progress" aria-live="polite"><strong>{managedBrand.autoSchedule ? "Piloto habilitado en la configuración" : "Piloto pausado"}</strong>{managedBrand.automationStatus ? <><span>Ciclo: {managedBrand.automationStatus.cycleStart.slice(0, 10)} → {managedBrand.automationStatus.cycleEnd.slice(0, 10)}</span><progress max={Math.max(1, managedBrand.automationStatus.total)} value={managedBrand.automationStatus.planned} /><span>{managedBrand.automationStatus.planned} de {managedBrand.automationStatus.total} espacios atendidos (incluye omitidos) · {managedBrand.automationStatus.failed} con error</span>{managedBrand.automationStatus.lastError && <div className="agent-error">{managedBrand.automationStatus.lastError}</div>}</> : <span>Aún no hay un ciclo preparado. Guarda el perfil para que el agente lo procese cuando las conexiones estén listas.</span>}<button type="button" className="secondary-button" onClick={() => void reloadPosts()}>Actualizar estado</button>{Boolean(managedBrand.automationStatus?.failed) && <><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule} onClick={() => void retryBrandPending()}>Reintentar pendientes</button><small>Comprueba las webs antes de reintentar. Recupera solo errores con fechas futuras; no recrea piezas completadas. La generación puede consumir créditos de OpenAI.</small></>}</div>
+            <div className="automation-progress" aria-live="polite"><strong>{managedBrand.autoSchedule ? "Piloto habilitado en la configuración" : "Piloto pausado"}</strong>{managedBrand.automationStatus ? <><span>Ciclo: {managedBrand.automationStatus.cycleStart.slice(0, 10)} → {managedBrand.automationStatus.cycleEnd.slice(0, 10)}</span><progress max={Math.max(1, managedBrand.automationStatus.total)} value={managedBrand.automationStatus.planned} /><span>{managedBrand.automationStatus.planned} de {managedBrand.automationStatus.total} espacios atendidos (incluye omitidos) · {managedBrand.automationStatus.failed} con error</span>{managedBrand.automationStatus.lastError && <div className="agent-error">{managedBrand.automationStatus.lastError}</div>}</> : <span>Aún no hay un ciclo preparado. Guarda el perfil para que el agente lo procese cuando las conexiones estén listas.</span>}<button type="button" className="secondary-button" onClick={() => void reloadPosts()}>Actualizar estado</button><button type="button" className="secondary-button" onClick={() => { setPostsBrandFilter(managedBrand.name); setBrandManagerOpen(false); setPostsOpen(true); }}>Ver contenido guardado ({posts.filter(post => post.brand === managedBrand.name).length})</button><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule || !connectedAccounts[managedBrand.name]} onClick={() => void restoreBrandCalendar()}>Recuperar calendario del agente</button><small>Reutiliza los borradores del agente en sus fechas futuras originales y reanuda pendientes cancelados al cambiar de cuenta. Activa y guarda el piloto primero.</small>{Boolean(managedBrand.automationStatus?.failed) && <><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule} onClick={() => void retryBrandPending()}>Reintentar pendientes</button><small>Comprueba las webs antes de reintentar. Recupera solo errores con fechas futuras; no recrea piezas completadas. La generación puede consumir créditos de OpenAI.</small></>}</div>
           </div>
           <div className="brand-manager-actions"><button className="secondary-button" onClick={() => void toggleBrandActive(managedBrand)} disabled={brandBusy}>{managedBrand.active ? "Quitar marca" : "Restaurar marca"}</button><button className="primary-button" onClick={() => void saveBrandProfile()} disabled={brandBusy}>{brandBusy ? "Guardando…" : "Guardar perfil"}</button></div>
         </> : <div className="empty-state"><span>Agrega una marca para configurar su agente.</span></div>}
