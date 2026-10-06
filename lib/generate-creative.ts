@@ -1,3 +1,4 @@
+import { loadReferenceUsage } from "@/lib/reference-usage";
 import { readWebsiteImage } from "@/lib/website-images";
 import { isManglar, MANGLAR_ESSENCE, MANGLAR_IMAGE_RULES } from "@/lib/manglar-preset";
 import { loadInstagramBrandMaterials } from "@/lib/instagram-brand-materials";
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
     const websiteUrls = savedWebsiteUrls.length ? savedWebsiteUrls : dneyla ? [DNEYLA_WEBSITE] : [];
     const includeDrive = enhanceProducts || !websiteUrls.length;
     const sourceWarnings: string[] = [];
+    const referenceUsage = await loadReferenceUsage(env.DB, ownerId, brand);
     const [websiteContext, driveContext, driveMaterials, assetRows, recentPosts] = await Promise.all([
       loadWebsiteSource(websiteUrls, brief, rotationSeed).catch(error => {
         if (!enhanceProducts) throw error;
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
         return null;
       }),
       includeDrive && brandProfile?.drive_folder_url ? readDriveDocumentContext(brandProfile.drive_folder_url) : Promise.resolve(""),
-      includeDrive && brandProfile ? loadGoogleDriveMaterials(env.DB, ownerId, brandProfile.id, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, decryptInstagramToken, rotationSeed).catch(error => {
+      includeDrive && brandProfile ? loadGoogleDriveMaterials(env.DB, ownerId, brandProfile.id, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, decryptInstagramToken, rotationSeed, referenceUsage).catch(error => {
         if (!enhanceProducts) throw error;
         sourceWarnings.push("No se pudo leer Google Drive. Revisa la conexión de D’Neyla.");
         return { text: "", content: [] };
@@ -77,17 +79,18 @@ export async function POST(request: Request) {
       env.DB.prepare("SELECT caption FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled', 'published') ORDER BY created_at DESC LIMIT 15").bind(ownerId, brand).all<{ caption: string }>(),
     ]);
     const useInstagramStyle = Boolean(brandProfile?.instagram_style);
-    const instagramMaterials = useInstagramStyle ? await loadInstagramBrandMaterials(env.DB, ownerId, brand, rotationSeed).catch(error => {
+    const instagramMaterials = useInstagramStyle ? await loadInstagramBrandMaterials(env.DB, ownerId, brand, rotationSeed, referenceUsage).catch(error => {
       sourceWarnings.push(error instanceof Error ? error.message : "No se pudo leer Instagram.");
       return {content: [] as Array<Record<string,string>>, text: ""};
     }) : {content: [] as Array<Record<string,string>>, text: ""};
     const referenceContent: Array<Record<string, string>> = [];
     if (websiteContext) {
-      const candidates = enhanceProducts ? rotateReferences(websiteContext.images, rotationSeed, 8) : websiteContext.images.slice(0, 8);
+      const candidates = referenceUsage.rank(websiteContext.images, url => `web:${websiteContext.url}:${url}`).slice(0, 12);
       for (const imageUrl of candidates) {
-        if (referenceContent.filter(item => item.type === "input_image").length >= 3) break;
+        if (referenceContent.filter(item => item.type === "input_image").length >= 1) break;
         try {
           const bytes = await readWebsiteImage(imageUrl);
+          referenceUsage.mark(`web:${websiteContext.url}:${imageUrl}`);
           referenceContent.push({ type: "input_text", text: `Fotografía de la web de esta marca. Fuente: ${imageUrl.startsWith("data:") ? `${websiteContext.url} (fotografía incrustada)` : imageUrl}` });
           referenceContent.push({ type: "input_image", image_url: `data:image/jpeg;base64,${bytes.toString("base64")}`, detail: "high" });
         } catch { /* Skip invalid, inaccessible and unsafe image resources. */ }
@@ -96,7 +99,7 @@ export async function POST(request: Request) {
     }
     const assetNotes: string[] = [];
     let referenceBytes = 0;
-    for (const asset of rotateReferences(assetRows.results ?? [], rotationSeed)) {
+    for (const asset of referenceUsage.rank(assetRows.results ?? [], asset => `asset:${asset.object_key}`).slice(0, 5)) {
       // Unlabelled brochures/product photos may belong to a different project.
       if (websiteContext && !enhanceProducts && !/logo|identidad|brand.?mark/i.test(asset.name)) continue;
       if (!env.BUCKET || asset.file_size > 7 * 1024 * 1024 || referenceBytes + asset.file_size > 10 * 1024 * 1024) {
@@ -108,7 +111,7 @@ export async function POST(request: Request) {
       const bytes = new Uint8Array(await object.arrayBuffer());
       referenceBytes += bytes.byteLength;
       const base64 = bytesToBase64(bytes);
-      if (asset.content_type.startsWith("image/")) referenceContent.push({ type: "input_image", image_url: `data:${asset.content_type};base64,${base64}`, detail: "high" });
+      if (asset.content_type.startsWith("image/")) { referenceContent.push({ type: "input_image", image_url: `data:${asset.content_type};base64,${base64}`, detail: "high" }); if (!/logo|identidad|brand.?mark/i.test(asset.name)) referenceUsage.mark(`asset:${asset.object_key}`); }
       else if (asset.content_type === "application/pdf") referenceContent.push({ type: "input_file", filename: asset.name.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 90) || "brochure.pdf", file_data: `data:application/pdf;base64,${base64}` });
       else assetNotes.push(`${asset.name}: ${new TextDecoder().decode(bytes).slice(0, 5000)}`);
     }
@@ -199,6 +202,7 @@ export async function POST(request: Request) {
       httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=300" },
       customMetadata: { ownerId, generatedBy: "social-studio-ai" },
     });
+    await referenceUsage.commit();
     return Response.json({
       brand,
       objective,
