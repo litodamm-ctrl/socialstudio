@@ -2,6 +2,10 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { isIP } from "node:net";
 
+// Landing pages can include large inline scripts or embedded assets. This limit
+// applies only to HTML ingestion; image downloads keep their independent cap.
+export const MAX_WEBSITE_BYTES = 16 * 1024 * 1024;
+
 export function isPublicAddress(address: string): boolean {
   if (isIP(address) === 4) {
     const [a, b] = address.split(".").map(Number);
@@ -134,7 +138,7 @@ export function selectWebsiteIndex(pages: Array<{ url: string; title?: string }>
 
 export async function inspectWebsite(url: string, read: typeof fetchPublicResource = fetchPublicResource): Promise<{ page: WebsitePage | null; error?: string }> {
   try {
-    const resource = await read(url);
+    const resource = await read(url, MAX_WEBSITE_BYTES);
     if (!["text/html", "application/xhtml+xml", "text/plain"].includes(resource.contentType)) return { page: null, error: "La respuesta no es una página de texto o HTML." };
     const page = extractWebsitePage(resource.bytes.toString("utf8"), resource.url);
     if (page.text.length < 40) return { page: null, error: "La página no contiene texto suficiente; puede requerir JavaScript." };
