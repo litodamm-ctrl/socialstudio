@@ -74,8 +74,8 @@ export async function POST(request: Request) {
         sourceWarnings.push("No se pudo leer Google Drive. Revisa la conexión de D’Neyla.");
         return { text: "", content: [] };
       }) : Promise.resolve({ text: "", content: [] }),
-      brandProfile ? env.DB.prepare("SELECT name, content_type, object_key, file_size FROM brand_assets WHERE owner_id = ? AND brand_id = ? ORDER BY created_at DESC LIMIT 100")
-        .bind(ownerId, brandProfile.id).all<{ name: string; content_type: string; object_key: string; file_size: number }>() : Promise.resolve({ results: [] }),
+      brandProfile ? env.DB.prepare("SELECT name, content_type, object_key, file_size, source_url FROM brand_assets WHERE owner_id = ? AND brand_id = ? ORDER BY created_at DESC LIMIT 100")
+        .bind(ownerId, brandProfile.id).all<{ name: string; content_type: string; object_key: string; file_size: number; source_url: string }>() : Promise.resolve({ results: [] }),
       env.DB.prepare("SELECT caption FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled', 'published') ORDER BY created_at DESC LIMIT 15").bind(ownerId, brand).all<{ caption: string }>(),
     ]);
     const useInstagramStyle = Boolean(brandProfile?.instagram_style);
@@ -99,10 +99,10 @@ export async function POST(request: Request) {
     }
     const assetNotes: string[] = [];
     let referenceBytes = 0;
-    for (const asset of referenceUsage.rank(assetRows.results ?? [], asset => `asset:${asset.object_key}`).slice(0, 5)) {
+    for (const asset of referenceUsage.rank((assetRows.results ?? []).filter(asset => !websiteContext || enhanceProducts || asset.source_url === websiteContext.url || /logo|identidad|brand.?mark/i.test(asset.name)), asset => `asset:${asset.object_key}`).slice(0, 5)) {
       // Unlabelled brochures/product photos may belong to a different project.
-      if (websiteContext && !enhanceProducts && !/logo|identidad|brand.?mark/i.test(asset.name)) continue;
-      if (!env.BUCKET || asset.file_size > 7 * 1024 * 1024 || referenceBytes + asset.file_size > 10 * 1024 * 1024) {
+      if (websiteContext && !enhanceProducts && asset.source_url !== websiteContext.url && !/logo|identidad|brand.?mark/i.test(asset.name)) continue;
+      if (!env.BUCKET || asset.file_size > 15 * 1024 * 1024 || referenceBytes + asset.file_size > 20 * 1024 * 1024) {
         assetNotes.push(asset.name);
         continue;
       }

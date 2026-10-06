@@ -46,9 +46,12 @@ export async function ensureBrandRegistry(db: D1Database) {
     name TEXT NOT NULL,
     content_type TEXT NOT NULL,
     object_key TEXT NOT NULL,
+    source_url TEXT NOT NULL DEFAULT '',
     file_size INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   )`).run();
+  try { await db.prepare("ALTER TABLE brand_assets ADD COLUMN source_url TEXT NOT NULL DEFAULT ''").run(); }
+  catch (error) { if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error; }
   await db.prepare(`CREATE TABLE IF NOT EXISTS brand_drive_states (
     state TEXT PRIMARY KEY, owner_id TEXT NOT NULL, brand_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
   )`).run();

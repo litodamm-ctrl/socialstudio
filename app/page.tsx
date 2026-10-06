@@ -108,7 +108,7 @@ type Brand = {
   automationStatus: { cycleStart: string; cycleEnd: string; planned: number; total: number; failed: number; lastError: string | null } | null;
 };
 
-type BrandAsset = { id: string; name: string; contentType: string; size: number };
+type BrandAsset = { sourceUrl?: string; id: string; name: string; contentType: string; size: number };
 
 const navItems = [
   { label: "Calendario", icon: CalendarDays, active: true },
@@ -154,6 +154,8 @@ export default function Home() {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const mediaInput = useRef<HTMLInputElement>(null);
   const brandAssetInput = useRef<HTMLInputElement>(null);
+  const [assetSourceUrl, setAssetSourceUrl] = useState("");
+  const [assetUploadProgress, setAssetUploadProgress] = useState("");
   const [scheduledAt, setScheduledAt] = useState(() => {
     const later = new Date();
     later.setDate(later.getDate() + 1);
@@ -607,6 +609,7 @@ export default function Home() {
     setBrandWebsites(item.websiteUrls?.length ? [...item.websiteUrls] : [item.websiteUrl || ""]);
     setBrandDrive(item.driveFolderUrl);
     setBrandAutoSchedule(item.autoSchedule);
+    setAssetSourceUrl("");
     setBrandAutoCrosspost(item.autoCrosspost);
     setBrandInstagramStyle(item.instagramStyle ?? true);
     setBrandPostingDays(item.postingDays);
@@ -751,26 +754,34 @@ export default function Home() {
     } finally { setBrandBusy(false); }
   }
 
-  async function uploadBrandAsset(file?: File) {
-    if (!file || !managedBrand) return;
+  async function uploadBrandAssets(files: File[]) {
+    if (!files.length || !managedBrand) return;
+    const uploadBrandId = managedBrand.id;
+    const uploadSourceUrl = assetSourceUrl;
     setBrandBusy(true);
-    try {
-      const signedResponse = await fetch(`/api/brands/${managedBrand.id}/assets/presign`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contentType: file.type, size: file.size }) });
+    let added = 0;
+    const errors: string[] = [];
+    for (const [index, file] of files.entries()) {
+      setAssetUploadProgress(`Subiendo ${index + 1} de ${files.length}: ${file.name}`);
+      try {
+        const contentType = file.type || (/\.pdf$/i.test(file.name) ? "application/pdf" : /\.jpe?g$/i.test(file.name) ? "image/jpeg" : /\.png$/i.test(file.name) ? "image/png" : /\.webp$/i.test(file.name) ? "image/webp" : /\.md$/i.test(file.name) ? "text/markdown" : /\.txt$/i.test(file.name) ? "text/plain" : "");
+        if (!file.size || file.size > 15 * 1024 * 1024) throw new Error("Máximo 15 MB por archivo.");
+      const signedResponse = await fetch(`/api/brands/${uploadBrandId}/assets/presign`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contentType: contentType, size: file.size }) });
       const signed = await signedResponse.json() as { error?: string; uploadUrl?: string; headers?: Record<string, string>; assetId?: string; objectKey?: string };
       if (!signedResponse.ok || !signed.uploadUrl || !signed.headers || !signed.assetId || !signed.objectKey) throw new Error(signed.error ?? "No se pudo preparar la carga del archivo.");
       const upload = await fetch(signed.uploadUrl, { method: "PUT", headers: signed.headers, body: file });
       if (!upload.ok) throw new Error("No se pudo cargar el recurso. Revisa la configuración CORS del bucket R2.");
-      const response = await fetch(`/api/brands/${managedBrand.id}/assets/${signed.assetId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: file.type, size: file.size, objectKey: signed.objectKey }) });
+      const response = await fetch(`/api/brands/${uploadBrandId}/assets/${signed.assetId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: contentType, size: file.size, objectKey: signed.objectKey, sourceUrl: uploadSourceUrl }) });
       const data = await response.json() as { error?: string; asset?: BrandAsset };
       if (!response.ok || !data.asset) throw new Error(data.error ?? "No se pudo registrar el recurso.");
       setBrandAssets((current) => [data.asset!, ...current]);
-      setToast("Recurso agregado a la biblioteca de la marca.");
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "No se pudo guardar el archivo.");
-    } finally {
-      if (brandAssetInput.current) brandAssetInput.current.value = "";
-      setBrandBusy(false);
+        added++;
+      } catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : "No se pudo cargar"}`); }
     }
+    if (brandAssetInput.current) brandAssetInput.current.value = "";
+    setBrandBusy(false);
+    setAssetUploadProgress(errors.length ? `${added} archivos cargados. ${errors.join(" · ")}` : `${added} archivos cargados correctamente.`);
+    setToast(`${added} de ${files.length} archivos agregados a la marca.${errors.length ? " Revisa los errores junto al botón de carga." : ""}`);
   }
 
   async function removeBrandAsset(asset: BrandAsset) {
@@ -924,7 +935,7 @@ export default function Home() {
       {brandManagerOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar gestión de marcas" onClick={() => setBrandManagerOpen(false)} /><aside className="composer-drawer brand-manager-drawer" aria-label="Gestionar marcas y agentes">
         <div className="drawer-header"><div><span className="drawer-kicker">IDENTIDAD Y AUTOMATIZACIÓN</span><h2>Marcas y agentes</h2></div><button className="icon-button" aria-label="Cerrar" onClick={() => setBrandManagerOpen(false)}><X size={19} /></button></div>
         <div className="brand-add-box"><strong>Agregar una marca</strong><div className="brand-add-fields"><input className="field-control" maxLength={60} value={brandNameInput} onChange={(event) => setBrandNameInput(event.target.value)} placeholder="Nombre de la marca" /><input className="field-control" maxLength={40} value={brandHandleInput} onChange={(event) => setBrandHandleInput(event.target.value)} placeholder="Usuario de Instagram (opcional)" /><button className="primary-button" onClick={() => void addBrand()} disabled={brandBusy || brandNameInput.trim().length < 2}><Plus size={15} /> Agregar</button></div></div>
-        <div className="managed-brand-list" aria-label="Marcas activas">{brands.map((item) => <button className={`managed-brand-chip ${editingBrandId === item.id ? "selected" : ""}`} key={item.id} onClick={() => editBrand(item)}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span>{item.name}</button>)}</div>
+        <div className="managed-brand-list" aria-label="Marcas activas">{brands.map((item) => <button className={`managed-brand-chip ${editingBrandId === item.id ? "selected" : ""}`} key={item.id} disabled={brandBusy} onClick={() => editBrand(item)}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span>{item.name}</button>)}</div>
         {managedBrand ? <>
           {isManglar(managedBrand.name) && <div className="brand-add-box"><strong>Community manager Manglar</strong><p>Contenido inspiracional colombiano y retoque de fotos reales.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => setBrandEssence(MANGLAR_ESSENCE)}>Cargar guía Manglar</button></div>}
           <div className="brand-add-box"><label className="autopilot-toggle"><input type="checkbox" checked={brandInstagramStyle} onChange={event => setBrandInstagramStyle(event.target.checked)} /><span><strong>Usar diseño de marca de Instagram</strong><small>Toma paleta, tipografía, composición y tono de las publicaciones recientes de la cuenta conectada. Guarda el perfil para aplicar esta opción.</small></span></label><p>Las fotos rotan al azar entre las menos usadas por esta marca, dando prioridad a las que no se usaron en los últimos 7 días. Si hay pocas, se reutilizan las menos recientes. Las referencias visuales no sustituyen los datos ni las fotos del producto o proyecto seleccionado. No se importan precios, promociones ni disponibilidad de publicaciones antiguas.</p><button type="button" className="secondary-button" disabled={brandBusy || !connectedAccounts[managedBrand.name]} onClick={() => void checkInstagramReferences()}>Comprobar referencias de Instagram</button>{instagramReferences.brandId === managedBrand.id && <><p role="status">{instagramReferences.message}</p><div style={{display:"flex",gap:8}}>{instagramReferences.images.map((src,index)=><img key={index} src={src} alt={`Referencia Instagram ${index+1}`} style={{width:"30%",objectFit:"contain"}} />)}</div>{instagramReferences.captions && <details><summary>Textos de referencia consultados</summary><p style={{whiteSpace:"pre-wrap"}}>{instagramReferences.captions}</p></details>}</>}</div>
@@ -945,9 +956,11 @@ export default function Home() {
           <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Pega el enlace de la carpeta y pulsa Conectar Google Drive. Guardaremos la carpeta antes de abrir Google.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" type="button" disabled={brandBusy} onClick={() => void connectBrandDrive(managedBrand.id)}><Link2 size={13} /> {brandBusy ? "Conectando…" : "Conectar Google Drive"}</button>}<span>La conexión solo da acceso de lectura.</span></div>
           <div className="facebook-brand-box"><div><strong>Facebook</strong><small>{connectedFacebookPages[managedBrand.name] ? `Página vinculada: ${connectedFacebookPages[managedBrand.name]}` : "Vincula la Página asociada a Instagram"}</small></div>{!connectedFacebookPages[managedBrand.name] && <button className="connect-mini" disabled={!connectedAccounts[managedBrand.name]} onClick={() => connectFacebookAccount(managedBrand.name)}><Link2 size={13} /> Vincular</button>}<label className="autopilot-toggle facebook-crosspost-toggle"><input type="checkbox" checked={brandAutoCrosspost} disabled={!connectedFacebookPages[managedBrand.name]} onChange={(event) => setBrandAutoCrosspost(event.target.checked)} /><span><strong>Replicar en Facebook al publicar en Instagram</strong><small>Requiere Facebook Login y una Página vinculada a esta cuenta de Instagram.</small></span></label></div>
           <div className="field-label field-gap">Recursos de marca <span className="field-hint">Logos, brochures, imágenes de referencia y documentos</span></div>
-          <input ref={brandAssetInput} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown" hidden onChange={(event) => void uploadBrandAsset(event.target.files?.[0])} />
-          <button className="asset-upload-button" onClick={() => brandAssetInput.current?.click()} disabled={brandBusy}><FileText size={16} /><span><strong>Agregar logo o brochure</strong><small>JPG, PNG, WebP, PDF, TXT o MD · hasta 15 MB</small></span><Plus size={16} /></button>
-          {brandAssets.length > 0 && <div className="brand-asset-list">{brandAssets.map((asset) => <div className="brand-asset-row" key={asset.id}><FileText size={15} /><span>{asset.name}<small>{(asset.size / (1024 * 1024)).toFixed(1)} MB</small></span><button className="plain-icon" aria-label={`Quitar ${asset.name}`} onClick={() => void removeBrandAsset(asset)}><Trash2 size={14} /></button></div>)}</div>}
+          {brandWebsites.some(url => url.trim()) && <><label className="field-label" htmlFor="asset-source">Proyecto de estos archivos</label><select id="asset-source" className="field-control" value={assetSourceUrl} disabled={brandBusy} onChange={event => setAssetSourceUrl(event.target.value)}><option value="">Recursos generales de la marca</option>{brandWebsites.filter(url => url.trim()).map(url=><option key={url} value={url}>{url}</option>)}</select><p className="field-hint">Para brochures y fotos inmobiliarias, selecciona la web del proyecto correspondiente. Así el agente no mezcla materiales entre proyectos. Los logos pueden cargarse como recursos generales.</p></>}
+          <input ref={brandAssetInput} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown,.pdf,.jpg,.jpeg,.png,.webp,.txt,.md" hidden onChange={(event) => void uploadBrandAssets(Array.from(event.target.files ?? []))} />
+          <button className="asset-upload-button" onClick={() => brandAssetInput.current?.click()} disabled={brandBusy}><FileText size={16} /><span><strong>Agregar brochures PDF y fotos</strong><small>Selecciona varios archivos · JPG, PNG, WebP, PDF, TXT o MD · 15 MB por archivo</small></span><Plus size={16} /></button>
+          {assetUploadProgress && <p role="status">{assetUploadProgress}</p>}
+          {brandAssets.length > 0 && <div className="brand-asset-list">{brandAssets.map((asset) => <div className="brand-asset-row" key={asset.id}><FileText size={15} /><span>{asset.name}<small>{asset.sourceUrl ? `Proyecto: ${asset.sourceUrl} · ` : ""}{(asset.size / (1024 * 1024)).toFixed(1)} MB</small></span><button className="plain-icon" aria-label={`Quitar ${asset.name}`} onClick={() => void removeBrandAsset(asset)}><Trash2 size={14} /></button></div>)}</div>}
           <div className="autopilot-card"><label className="autopilot-toggle"><input type="checkbox" checked={brandAutoSchedule} onChange={(event) => { setBrandAutoSchedule(event.target.checked); if (event.target.checked && !managedBrand.automationStatus) { setBrandPostingDays([0, 1, 2, 3, 4, 5, 6]); setBrandAutoStories(true); } }} /><span><strong>Piloto automático · 15 días</strong><small>Prepara el feed y las historias de esta marca, publica según el calendario y renueva el siguiente bloque sin nuevas órdenes.</small></span></label>
             {brandAutoSchedule && <><div className="posting-day-picker" aria-label="Días de publicación">{[{ label: "L", value: 1 }, { label: "M", value: 2 }, { label: "X", value: 3 }, { label: "J", value: 4 }, { label: "V", value: 5 }, { label: "S", value: 6 }, { label: "D", value: 0 }].map((day) => <button type="button" key={day.value} className={brandPostingDays.includes(day.value) ? "day-selected" : ""} aria-pressed={brandPostingDays.includes(day.value)} onClick={() => togglePostingDay(day.value)}>{day.label}</button>)}</div><label className="field-label" htmlFor="brand-time">Feed · hora de Bogotá</label><input id="brand-time" className="field-control" type="time" value={brandPreferredTime} onChange={(event) => setBrandPreferredTime(event.target.value)} /><label className="autopilot-toggle field-gap"><input type="checkbox" checked={brandAutoStories} onChange={(event) => setBrandAutoStories(event.target.checked)} /><span><strong>Una historia de imagen por día seleccionado</strong><small>Una pieza vertical además de la publicación de feed.</small></span></label>{brandAutoStories && <><label className="field-label field-gap" htmlFor="brand-story-time">Historias · hora de Bogotá</label><input id="brand-story-time" className="field-control" type="time" value={brandStoryTime} onChange={(event) => setBrandStoryTime(event.target.value)} /></>}<p>Con todos los días seleccionados: 15 publicaciones de feed{brandAutoStories ? " y 15 historias" : ""} por ciclo. Facebook requiere la página vinculada y la opción de replicar activada. La generación utiliza tu saldo de API.</p></>}
             <p>La primera programación comienza mañana. Se activa una sola vez: no necesitas volver a abrir la app. Los cambios de días y horarios se aplican al próximo ciclo; puedes editar cada publicación del ciclo actual.</p><p>Al desactivar y guardar, se pausa la generación y la publicación de las piezas pendientes del agente. Tus publicaciones manuales conservan su programación.</p>

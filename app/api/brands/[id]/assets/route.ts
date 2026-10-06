@@ -14,7 +14,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const brand = await env.DB.prepare("SELECT id FROM brand_registry WHERE id = ? AND owner_id = ?")
       .bind(id, ownerId).first<{ id: string }>();
     if (!brand) return Response.json({ error: "La marca no existe." }, { status: 404 });
-    const result = await env.DB.prepare("SELECT id, name, content_type AS contentType, file_size AS size, created_at AS createdAt FROM brand_assets WHERE owner_id = ? AND brand_id = ? ORDER BY created_at DESC")
+    const result = await env.DB.prepare("SELECT id, name, source_url AS sourceUrl, content_type AS contentType, file_size AS size, created_at AS createdAt FROM brand_assets WHERE owner_id = ? AND brand_id = ? ORDER BY created_at DESC")
       .bind(ownerId, id).all<{ id: string; name: string; contentType: string; size: number; createdAt: number }>();
     return Response.json({ assets: result.results ?? [] });
   } catch (error) {
@@ -52,3 +52,4 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: "No se pudo guardar el archivo." }, { status: 503 });
   }
 }
+
