@@ -66,7 +66,9 @@ export async function processBrandAgentSchedules(db: D1Database) {
       const generated = await generateCreative(new Request("https://social-studio.internal/api/agent/generate", {
         method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-id": due.owner_id },
         body: JSON.stringify({ brand: due.name, objective: due.objective, mediaType: due.media_type, scheduledDate: due.local_date,
-          brief: `Contenido de ${due.media_type === 'Historia' ? 'historia' : 'feed'} para ${due.local_date}. Objetivo ${due.objective}. Usa la información vigente de esta marca y evita repetir temas recientes. ${due.brand_essence}`.slice(0,600),
+          // The generator reads the full essence separately. Including project names here
+          // incorrectly turns general brand context into an explicit project selection.
+          brief: `Contenido de ${due.media_type === 'Historia' ? 'historia' : 'feed'} para ${due.local_date}. Objetivo ${due.objective}. Usa la información vigente de esta marca y evita repetir temas recientes.`,
           callToAction: "Propón una invitación coherente con la marca sin inventar ofertas ni datos." }),
       }));
       const result = await generated.json() as { error?: string; mediaUrl?: string; caption?: string };
