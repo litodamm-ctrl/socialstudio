@@ -1,3 +1,4 @@
+import { readWebsiteImage } from "@/lib/website-images";
 import { isManglar, MANGLAR_ESSENCE, MANGLAR_IMAGE_RULES } from "@/lib/manglar-preset";
 import { loadInstagramBrandMaterials } from "@/lib/instagram-brand-materials";
 import { env } from "@/lib/runtime";
@@ -86,17 +87,12 @@ export async function POST(request: Request) {
       for (const imageUrl of candidates) {
         if (referenceContent.filter(item => item.type === "input_image").length >= 3) break;
         try {
-          const resource = await fetchPublicResource(imageUrl, 5 * 1024 * 1024);
-          if (!["image/jpeg", "image/png", "image/webp"].includes(resource.contentType)) continue;
-          const decoder = sharp(resource.bytes, { limitInputPixels: 20_000_000 });
-          const metadata = await decoder.metadata();
-          if (!["jpeg", "png", "webp"].includes(metadata.format ?? "") || (metadata.width ?? 0) < 300 || (metadata.height ?? 0) < 200) continue;
-          const bytes = await decoder.rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
-          referenceContent.push({ type: "input_text", text: `Fotografía de la web de esta marca. Fuente: ${imageUrl}` });
+          const bytes = await readWebsiteImage(imageUrl);
+          referenceContent.push({ type: "input_text", text: `Fotografía de la web de esta marca. Fuente: ${imageUrl.startsWith("data:") ? `${websiteContext.url} (fotografía incrustada)` : imageUrl}` });
           referenceContent.push({ type: "input_image", image_url: `data:image/jpeg;base64,${bytes.toString("base64")}`, detail: "high" });
         } catch { /* Skip invalid, inaccessible and unsafe image resources. */ }
       }
-      if (!referenceContent.length && !enhanceProducts) return Response.json({ error: "La web seleccionada no tiene imágenes públicas utilizables. Agrega una página del proyecto con fotografías accesibles." }, { status: 422 });
+      if (!referenceContent.length && !enhanceProducts) return Response.json({ error: `No se pudieron procesar las fotografías de ${websiteContext.url}. Comprueba esta web para ver el diagnóstico.` }, { status: 422 });
     }
     const assetNotes: string[] = [];
     let referenceBytes = 0;

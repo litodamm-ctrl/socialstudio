@@ -1,3 +1,5 @@
+import { readWebsiteImage } from "@/lib/website-images";
+export const maxDuration = 120;
 import { inspectWebsite, normalizeWebsiteUrls } from "@/lib/website-sources";
 
 export async function POST(request: Request) {
@@ -11,9 +13,14 @@ export async function POST(request: Request) {
     while (cursor < urls.length) {
       const index = cursor++;
       const result = await inspectWebsite(urls[index]);
-      results[index] = { url: urls[index], message: result.page
-        ? `Texto accesible · ${result.page.images.length} enlaces de imágenes detectados (descarga pendiente de validar).`
-        : result.error || "No se pudo leer la web." };
+      if (!result.page) { results[index] = {url:urls[index],message:result.error || "No se pudo leer la web."}; continue; }
+      let valid = 0;
+      for (const source of result.page.images.slice(0,8)) {
+        try { await readWebsiteImage(source); valid++; } catch { /* Report processed images, not only links. */ }
+        if (valid >= 3) break;
+      }
+      const embedded = result.page.images.filter(source => source.startsWith("data:")).length;
+      results[index] = {url:urls[index], message:`Texto accesible · ${result.page.images.length} imágenes detectadas (${embedded} incrustadas) · ${valid ? `${valid} fotografías verificadas para el agente` : "ninguna superó la validación de formato, tamaño y acceso"}.`};
     }
   }));
   return Response.json({ results }, { headers: { "Cache-Control": "no-store" } });

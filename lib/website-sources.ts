@@ -109,15 +109,25 @@ export function extractWebsitePage(html: string, url: string): WebsitePage {
   const clean = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   const title = decode(clean.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").replace(/<[^>]*>/g, " ").trim().slice(0, 200);
   const images: string[] = [];
-  const add = (candidate: string) => { try { const result = publicUrl(new URL(decode(candidate), url).href).href; if (!images.includes(result)) images.push(result); } catch { /* unsafe or invalid image */ } };
-  for (const match of clean.matchAll(/<(?:meta|img)\b[^>]*>/gi)) {
+  const add = (candidate: string) => {
+    candidate = decode(candidate).trim();
+    if (!candidate || images.length >= 20) return;
+    if (/^data:/i.test(candidate)) {
+      if (/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(candidate) && candidate.length <= 7 * 1024 * 1024 && !images.includes(candidate)) images.push(candidate);
+      return;
+    }
+    try { const result = publicUrl(new URL(decode(candidate), url).href).href; if (!images.includes(result)) images.push(result); } catch { /* unsafe or invalid image */ } };
+  for (const match of clean.matchAll(/<(?:meta|img|source)\b[^>]*>/gi)) {
     const attributes: Record<string, string> = {};
     for (const attr of match[0].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)) attributes[attr[1].toLowerCase()] = attr[2] ?? attr[3] ?? attr[4];
     if (/^<meta/i.test(match[0]) && /^(?:og:image(?::secure_url)?|twitter:image)$/.test(attributes.property ?? attributes.name ?? "")) add(attributes.content ?? "");
-    if (/^<img/i.test(match[0])) {
-      for (const key of ["data-src", "src"]) if (attributes[key]) add(attributes[key]);
-      for (const part of (attributes.srcset ?? "").split(",")) { const candidate = part.trim().split(/\s+/)[0]; if (candidate) add(candidate); }
+    if (/^<(?:img|source)/i.test(match[0])) {
+      for (const key of ["data-src", "data-lazy-src", "src"]) if (attributes[key]) add(attributes[key]);
+      for (const candidate of (attributes.srcset ?? attributes["data-srcset"] ?? "").matchAll(/(?:data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}|[^\s,]+)(?:\s+\d+(?:\.\d+)?[wx])?/gi)) add(candidate[0].replace(/\s+\d+(?:\.\d+)?[wx]$/, ""));
     }
+  }
+  for (const match of html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ").matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) {
+    if (/^data:image\/(?:jpeg|png|webp);/i.test(match[1]) || /\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(match[1])) add(match[1]);
   }
   return { url, title, text: decode(clean.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 10_000), images: images.slice(0, 20) };
 }
