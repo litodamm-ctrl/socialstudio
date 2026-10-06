@@ -49,8 +49,8 @@ export async function POST(request: Request) {
   if (callToAction.length > 140) return Response.json({ error: "La llamada a la acción debe tener máximo 140 caracteres." }, { status: 400 });
 
   try {
-    const brandProfile = await env.DB.prepare("SELECT id, brand_essence, website_url, website_urls, drive_folder_url FROM brand_registry WHERE owner_id = ? AND name = ? AND active = 1")
-      .bind(ownerId, brand).first<{ id: string; brand_essence: string; website_url: string; website_urls: string; drive_folder_url: string }>();
+    const brandProfile = await env.DB.prepare("SELECT id, brand_essence, website_url, website_urls, drive_folder_url, instagram_style FROM brand_registry WHERE owner_id = ? AND name = ? AND active = 1")
+      .bind(ownerId, brand).first<{ id: string; brand_essence: string; website_url: string; website_urls: string; drive_folder_url: string; instagram_style: number }>();
     const dneyla = isDneyla(brand);
     const manglar = isManglar(brand);
     const enhanceProducts = dneyla || manglar;
@@ -75,7 +75,8 @@ export async function POST(request: Request) {
         .bind(ownerId, brandProfile.id).all<{ name: string; content_type: string; object_key: string; file_size: number }>() : Promise.resolve({ results: [] }),
       env.DB.prepare("SELECT caption FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled', 'published') ORDER BY created_at DESC LIMIT 15").bind(ownerId, brand).all<{ caption: string }>(),
     ]);
-    const instagramMaterials = manglar ? await loadInstagramBrandMaterials(env.DB, ownerId, brand, rotationSeed).catch(error => {
+    const useInstagramStyle = Boolean(brandProfile?.instagram_style);
+    const instagramMaterials = useInstagramStyle ? await loadInstagramBrandMaterials(env.DB, ownerId, brand, rotationSeed).catch(error => {
       sourceWarnings.push(error instanceof Error ? error.message : "No se pudo leer Instagram.");
       return {content: [] as Array<Record<string,string>>, text: ""};
     }) : {content: [] as Array<Record<string,string>>, text: ""};
@@ -115,15 +116,14 @@ export async function POST(request: Request) {
       else if (asset.content_type === "application/pdf") referenceContent.push({ type: "input_file", filename: asset.name.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 90) || "brochure.pdf", file_data: `data:application/pdf;base64,${base64}` });
       else assetNotes.push(`${asset.name}: ${new TextDecoder().decode(bytes).slice(0, 5000)}`);
     }
-    if (enhanceProducts && ![...referenceContent, ...driveMaterials.content, ...instagramMaterials.content].some(item => item.type === "input_image")) {
+    if (enhanceProducts && ![...referenceContent, ...driveMaterials.content, ...(manglar ? instagramMaterials.content : [])].some(item => item.type === "input_image")) {
       return Response.json({ error: `${brand} necesita una foto real para mejorar el producto. Conecta su carpeta de Drive o carga fotos en Recursos de marca. ${sourceWarnings.join(" ")}` }, { status: 422 });
     }
     const inputContent = [
       ...(enhanceProducts && websiteContext ? [{ type: "input_text", text: `Catálogo de ${brand}: ${websiteContext.url}. ${websiteContext.text}. Las fotos adjuntas de web y Drive son referencias de esta misma marca. No uses sus precios en las publicaciones.` }] : []),
       { type: "input_text", text: `Fecha prevista: ${publicationDate} (America/Bogota). Formato: ${mediaType}. Temas y textos ya utilizados: ${(recentPosts.results ?? []).map(post => post.caption.slice(0, 400)).join(" | ") || "Sin publicaciones previas"}. Evita repetir esos textos y enfoques.` },
       { type: "input_text", text: [`Marca: ${brand}`, `Objetivo: ${objective}`, `Brief confirmado por el usuario: ${brief}`, `CTA solicitado: ${callToAction || "Propón una llamada a la acción prudente que no invente información."}`, essence ? `Esencia de marca: ${essence}` : "", websiteContext && !enhanceProducts ? `ÚNICO PROYECTO SELECCIONADO. Fuente: ${websiteContext.url}. Título: ${websiteContext.title}. Texto público: ${websiteContext.text}. Las primeras imágenes adjuntas proceden exclusivamente de esta página. No uses información ni fotos de otros proyectos.` : "", includeDrive && driveContext ? `Información de Google Drive: ${driveContext}` : "", includeDrive && driveMaterials.text ? `Materiales recientes de la carpeta conectada de Google Drive: ${driveMaterials.text}` : "", assetNotes.length ? `Otros recursos disponibles: ${assetNotes.join(" | ")}` : ""].filter(Boolean).join("\n") },
-      ...(manglar ? [{type:"input_text",text:`Publicaciones históricas de la cuenta de Manglar como guía de estilo, sin acreditar disponibilidad ni precios: ${instagramMaterials.text}`}] : []),
-      ...instagramMaterials.content,
+      ...(instagramMaterials.content.length ? [{type:"input_text",text:`REFERENCIAS DE DISEÑO DE LA PROPIA CUENTA DE ${brand}. Analiza paleta, composición, tipografía, iluminación y tono. ${manglar ? "Puedes retocar un producto real de estas fotos, sin inferir disponibilidad actual." : "SOLO ESTILO: no uses sus productos, personas, inmuebles, precios ni datos como contenido. Las fotografías del producto o proyecto objetivo se adjuntan DESPUÉS de FIN DE REFERENCIAS DE DISEÑO."} Textos históricos para tono, no para afirmaciones comerciales: ${instagramMaterials.text}`}, ...instagramMaterials.content, {type:"input_text",text:"FIN DE REFERENCIAS DE DISEÑO. A continuación están las fuentes de contenido y fotografías del producto/proyecto seleccionado."}] : []),
       ...referenceContent,
       ...(includeDrive ? driveMaterials.content : []),
     ];
@@ -141,6 +141,7 @@ export async function POST(request: Request) {
           mediaType === "Historia" ? "Genera una historia vertical. Incluye en la imagen el titular, mensaje breve y CTA: la historia se publica sin caption visible. Mantén todo el texto grande, legible y alejado de los bordes superiores e inferiores. No dibujes botones, enlaces pulsables, encuestas ni funciones interactivas ficticias." : "Genera un creativo cuadrado 1:1 para el feed, con jerarquía visual clara y un titular breve legible.",
           "Conserva fielmente los productos reales de las referencias y la identidad de esta marca. No mezcles marcas ni inventes logos; utiliza el logo suministrado cuando sea reproducible fielmente, o el nombre en texto limpio.",
           websiteContext && !enhanceProducts ? "Comunica exclusivamente el proyecto de la fuente seleccionada. La esencia de la marca define voz y estilo, no autoriza trasladar precios, amenidades, imágenes ni datos de otro proyecto. Conserva las fotografías inmobiliarias como referencias reales; no inventes construcciones, acabados, vistas ni amenidades. Una visualización o render de la fuente debe identificarse como imagen de referencia." : "",
+          useInstagramStyle && instagramMaterials.content.length ? "Conserva la identidad visual observada en las referencias de Instagram de esta marca. Usa su paleta, jerarquía tipográfica y lenguaje fotográfico; las instrucciones explícitas de la esencia prevalecen. No copies textos ni promociones antiguas. Las referencias de estilo jamás autorizan sustituir el producto o mezclar proyectos." : "",
           essence ? `Esencia y guía de marca: ${essence}` : "No hay guía de marca adicional; conserva una voz clara y profesional.",
           includeDrive && (driveContext || driveMaterials.text || driveMaterials.content.length) ? "Usa el material de Google Drive como referencia de la marca; verifica su vigencia." : "",
           dneyla ? `${DNEYLA_ESSENCE}\n${DNEYLA_IMAGE_RULES}` : manglar ? `${MANGLAR_ESSENCE}\n${MANGLAR_IMAGE_RULES}` : "",

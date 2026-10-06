@@ -19,6 +19,7 @@ export const BRAND_REGISTRY_SQL = `CREATE TABLE IF NOT EXISTS brand_registry (
   drive_folder_url TEXT NOT NULL DEFAULT '',
   drive_folder_id TEXT NOT NULL DEFAULT '',
   drive_refresh_token TEXT,
+  instagram_style INTEGER NOT NULL DEFAULT 1,
   auto_schedule INTEGER NOT NULL DEFAULT 0,
   auto_crosspost INTEGER NOT NULL DEFAULT 0,
   posting_days TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
@@ -32,7 +33,7 @@ export const BRAND_REGISTRY_SQL = `CREATE TABLE IF NOT EXISTS brand_registry (
 
 export async function ensureBrandRegistry(db: D1Database) {
   await db.prepare(BRAND_REGISTRY_SQL).run();
-  for (const [column, definition] of [["website_urls", "TEXT NOT NULL DEFAULT '[]'"], ["story_time", "TEXT NOT NULL DEFAULT '09:00'"], ["auto_stories", "INTEGER NOT NULL DEFAULT 1"]]) {
+  for (const [column, definition] of [["instagram_style", "INTEGER NOT NULL DEFAULT 1"], ["website_urls", "TEXT NOT NULL DEFAULT '[]'"], ["story_time", "TEXT NOT NULL DEFAULT '09:00'"], ["auto_stories", "INTEGER NOT NULL DEFAULT 1"]]) {
     try { await db.prepare(`ALTER TABLE brand_registry ADD COLUMN ${column} ${definition}`).run(); }
     catch (error) { if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error; }
   }

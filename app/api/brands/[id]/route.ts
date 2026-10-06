@@ -41,6 +41,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       fields.push("drive_folder_url = ?"); values.push(value);
       fields.push("drive_folder_id = ?"); values.push(folderId);
     }
+    if (typeof input.instagramStyle === "boolean") { fields.push("instagram_style = ?"); values.push(input.instagramStyle ? 1 : 0); }
     if (typeof input.autoSchedule === "boolean") {
       if (input.autoSchedule) {
         const essence = typeof input.essence === "string" ? input.essence.trim() : current.brand_essence;

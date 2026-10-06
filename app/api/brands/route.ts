@@ -6,7 +6,7 @@ import { DNEYLA_ESSENCE, DNEYLA_WEBSITE, isDneyla } from "@/lib/brand-presets";
 type BrandRow = {
   id: string; name: string; handle: string; color: string; initials: string; active: number;
   brand_essence: string; website_url: string; website_urls: string; drive_folder_url: string; auto_schedule: number;
-  auto_crosspost: number; posting_days: string; preferred_time: string;
+  instagram_style: number; auto_crosspost: number; posting_days: string; preferred_time: string;
   drive_connected: number;
   story_time: string; auto_stories: number;
 };
@@ -33,7 +33,7 @@ function serialize(row: BrandRow) {
   return {
     id: row.id, name: row.name, handle: row.handle, color: row.color, initials: row.initials,
     active: Boolean(row.active), essence: row.brand_essence || (isDneyla(row.name) ? DNEYLA_ESSENCE : ""), websiteUrl: websiteUrls[0] ?? "", websiteUrls,
-    driveFolderUrl: row.drive_folder_url, driveConnected: Boolean(row.drive_connected), autoSchedule: Boolean(row.auto_schedule), autoCrosspost: Boolean(row.auto_crosspost),
+    driveFolderUrl: row.drive_folder_url, driveConnected: Boolean(row.drive_connected), instagramStyle: Boolean(row.instagram_style), autoSchedule: Boolean(row.auto_schedule), autoCrosspost: Boolean(row.auto_crosspost),
     postingDays, preferredTime: row.preferred_time, storyTime: row.story_time, autoStories: Boolean(row.auto_stories),
   };
 }
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   try {
     await ensureDefaultBrands(env.DB, ownerId);
     await ensureAutopilotTables(env.DB);
-    const result = await env.DB.prepare("SELECT id, name, handle, color, initials, active, brand_essence, website_url, website_urls, drive_folder_url, auto_schedule, auto_crosspost, posting_days, preferred_time, story_time, auto_stories, CASE WHEN drive_refresh_token IS NULL THEN 0 ELSE 1 END AS drive_connected FROM brand_registry WHERE owner_id = ? ORDER BY created_at, name")
+    const result = await env.DB.prepare("SELECT id, name, handle, color, initials, active, brand_essence, website_url, website_urls, drive_folder_url, instagram_style, auto_schedule, auto_crosspost, posting_days, preferred_time, story_time, auto_stories, CASE WHEN drive_refresh_token IS NULL THEN 0 ELSE 1 END AS drive_connected FROM brand_registry WHERE owner_id = ? ORDER BY created_at, name")
       .bind(ownerId).all<BrandRow>();
     const stats = await env.DB.prepare(`SELECT c.brand_id, c.start_date AS cycleStart, c.end_date AS cycleEnd,
       COUNT(s.id) AS total, SUM(CASE WHEN s.status IN ('completed','skipped') THEN 1 ELSE 0 END) AS planned,
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     const initials = brandInitials(name) || "M";
     await env.DB.prepare("INSERT INTO brand_registry (id, owner_id, name, handle, color, initials, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(id, ownerId, name, handle ? `@${handle}` : "", color, initials, now, now).run();
-    return Response.json({ brand: { id, name, handle: handle ? `@${handle}` : "", color, initials, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [0,1,2,3,4,5,6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null } }, { status: 201 });
+    return Response.json({ brand: { id, name, handle: handle ? `@${handle}` : "", color, initials, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, instagramStyle: true, autoSchedule: false, autoCrosspost: false, postingDays: [0,1,2,3,4,5,6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null } }, { status: 201 });
   } catch (error) {
     console.error("Unable to add brand", error instanceof Error ? error.message : "unknown error");
     return Response.json({ error: "No se pudo registrar la marca." }, { status: 503 });

@@ -99,6 +99,7 @@ type Brand = {
   driveFolderUrl: string;
   driveConnected: boolean;
   autoSchedule: boolean;
+  instagramStyle: boolean;
   autoCrosspost: boolean;
   postingDays: number[];
   preferredTime: string;
@@ -133,7 +134,7 @@ function statusLabel(status: Post["status"]) {
 }
 
 export default function Home() {
-  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
+  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, instagramStyle: true, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [week, setWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [posts, setPosts] = useState<Post[]>([]);
@@ -189,6 +190,7 @@ export default function Home() {
   const [brandPostingDays, setBrandPostingDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
   const [brandPreferredTime, setBrandPreferredTime] = useState("18:00");
   const [brandStoryTime, setBrandStoryTime] = useState("09:00");
+  const [brandInstagramStyle, setBrandInstagramStyle] = useState(true);
   const [brandAutoStories, setBrandAutoStories] = useState(true);
   const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([]);
 
@@ -606,6 +608,7 @@ export default function Home() {
     setBrandDrive(item.driveFolderUrl);
     setBrandAutoSchedule(item.autoSchedule);
     setBrandAutoCrosspost(item.autoCrosspost);
+    setBrandInstagramStyle(item.instagramStyle ?? true);
     setBrandPostingDays(item.postingDays);
     setBrandPreferredTime(item.preferredTime);
     setBrandStoryTime(item.storyTime ?? "09:00");
@@ -717,7 +720,7 @@ export default function Home() {
     try {
       const response = await fetch(`/api/brands/${managedBrand.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ essence: brandEssence, websiteUrls: brandWebsites.map(url => url.trim()).filter(Boolean), driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime, storyTime: brandStoryTime, autoStories: brandAutoStories }),
+        body: JSON.stringify({ instagramStyle: brandInstagramStyle, essence: brandEssence, websiteUrls: brandWebsites.map(url => url.trim()).filter(Boolean), driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime, storyTime: brandStoryTime, autoStories: brandAutoStories }),
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo guardar el perfil.");
@@ -923,7 +926,8 @@ export default function Home() {
         <div className="brand-add-box"><strong>Agregar una marca</strong><div className="brand-add-fields"><input className="field-control" maxLength={60} value={brandNameInput} onChange={(event) => setBrandNameInput(event.target.value)} placeholder="Nombre de la marca" /><input className="field-control" maxLength={40} value={brandHandleInput} onChange={(event) => setBrandHandleInput(event.target.value)} placeholder="Usuario de Instagram (opcional)" /><button className="primary-button" onClick={() => void addBrand()} disabled={brandBusy || brandNameInput.trim().length < 2}><Plus size={15} /> Agregar</button></div></div>
         <div className="managed-brand-list" aria-label="Marcas activas">{brands.map((item) => <button className={`managed-brand-chip ${editingBrandId === item.id ? "selected" : ""}`} key={item.id} onClick={() => editBrand(item)}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span>{item.name}</button>)}</div>
         {managedBrand ? <>
-          {isManglar(managedBrand.name) && <div className="brand-add-box"><strong>Community manager Manglar</strong><p>Contenido inspiracional colombiano y retoque de fotos reales. El agente consulta publicaciones recientes de la cuenta conectada para tomar referencias de estilo y producto; también puede usar Drive y recursos cargados.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => setBrandEssence(MANGLAR_ESSENCE)}>Cargar guía Manglar</button><button type="button" className="secondary-button" disabled={brandBusy || !connectedAccounts[managedBrand.name]} onClick={() => void checkInstagramReferences()}>Comprobar referencias de Instagram</button>{instagramReferences.brandId === managedBrand.id && <><p role="status">{instagramReferences.message}</p><div style={{display:"flex",gap:8}}>{instagramReferences.images.map((src,index)=><img key={index} src={src} alt={`Referencia Instagram ${index+1}`} style={{width:"30%",objectFit:"contain"}} />)}</div>{instagramReferences.captions && <details><summary>Textos de referencia consultados</summary><p style={{whiteSpace:"pre-wrap"}}>{instagramReferences.captions}</p></details>}</>}</div>}
+          {isManglar(managedBrand.name) && <div className="brand-add-box"><strong>Community manager Manglar</strong><p>Contenido inspiracional colombiano y retoque de fotos reales.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => setBrandEssence(MANGLAR_ESSENCE)}>Cargar guía Manglar</button></div>}
+          <div className="brand-add-box"><label className="autopilot-toggle"><input type="checkbox" checked={brandInstagramStyle} onChange={event => setBrandInstagramStyle(event.target.checked)} /><span><strong>Usar diseño de marca de Instagram</strong><small>Toma paleta, tipografía, composición y tono de las publicaciones recientes de la cuenta conectada. Guarda el perfil para aplicar esta opción.</small></span></label><p>Las referencias visuales no sustituyen los datos ni las fotos del producto o proyecto seleccionado. No se importan precios, promociones ni disponibilidad de publicaciones antiguas.</p><button type="button" className="secondary-button" disabled={brandBusy || !connectedAccounts[managedBrand.name]} onClick={() => void checkInstagramReferences()}>Comprobar referencias de Instagram</button>{instagramReferences.brandId === managedBrand.id && <><p role="status">{instagramReferences.message}</p><div style={{display:"flex",gap:8}}>{instagramReferences.images.map((src,index)=><img key={index} src={src} alt={`Referencia Instagram ${index+1}`} style={{width:"30%",objectFit:"contain"}} />)}</div>{instagramReferences.captions && <details><summary>Textos de referencia consultados</summary><p style={{whiteSpace:"pre-wrap"}}>{instagramReferences.captions}</p></details>}</>}</div>
           {isDneyla(managedBrand.name) && <div className="brand-add-box"><strong>Agente creativo D’Neyla</strong><p className="field-hint">Mejora fotos reales de la web y de Drive con el estilo de la marca. Sin precios ni “pide hoy”. Usa una carpeta exclusiva con fotos de productos, logo y publicaciones aprobadas.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => { setBrandEssence(DNEYLA_ESSENCE); setBrandWebsites(current => current.some(url => url.trim()) ? current : [DNEYLA_WEBSITE]); setToast("Guía D’Neyla cargada. Pulsa Guardar perfil para conservarla."); }}><Sparkles size={14} /> Cargar guía recomendada</button></div>}
           <div className="brand-agent-heading"><div className="account-dot" style={{ background: managedBrand.color }}>{managedBrand.initials}</div><div><strong>Agente de {managedBrand.name}</strong><span>Perfil independiente para esta marca</span></div><span className={`brand-status-pill ${managedBrand.active ? "" : "archived"}`}>{managedBrand.active ? "Activa" : "Archivada"}</span></div>
           <label className="field-label field-gap" htmlFor="brand-essence">Esencia y reglas de marca</label><textarea id="brand-essence" className="caption-control brand-essence-control" maxLength={4000} value={brandEssence} onChange={(event) => setBrandEssence(event.target.value)} placeholder="Describe personalidad, público, productos, beneficios confirmados, palabras que usa o evita y estilo visual…" /><div className="field-hint">El agente usa estas reglas para redactar el copy y crear los creativos.</div>
