@@ -267,7 +267,8 @@ export default function Home() {
   }, [agentPreviewUrl]);
 
   useEffect(() => {
-    const result = new URLSearchParams(window.location.search).get("meta");
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("meta");
     const messages: Record<string, string> = {
       connected: "Cuenta de Instagram conectada.",
       facebook_connected: "Página de Facebook vinculada. Las próximas publicaciones de esta marca también se enviarán a Facebook.",
@@ -281,6 +282,8 @@ export default function Home() {
       cancelled: "Cancelaste la autorización de Instagram.",
       invalid_state: "El enlace de autorización expiró o ya se usó. Intenta de nuevo.",
       connection_failed: "No pudimos completar la conexión de Instagram. Revisa la configuración de Meta y vuelve a intentar.",
+      account_already_linked: `Instagram @${(params.get("ig_username") || "seleccionado").slice(0, 60)} ya está vinculado a la marca ${(params.get("linked_brand") || "otra marca").slice(0, 60)}. Vuelve a conectar e inicia sesión con la cuenta de la marca correcta. No cambiamos las conexiones existentes.`,
+      account_conflict: "Esta cuenta de Instagram ya tiene una vinculación que entra en conflicto. Revisa las cuentas conectadas a tus marcas y selecciona el Instagram correcto.",
       setup_error: "No se pudo iniciar la autorización. Revisa la configuración e intenta de nuevo.",
       storage_unavailable: "El almacenamiento no respondió durante la autorización. Intenta más tarde.",
       missing_code: "Instagram no devolvió el código necesario para completar la autorización.",

@@ -68,6 +68,16 @@ export async function GET(request: Request) {
     const instagramUserId = String(profile.id ?? longToken.user_id ?? "");
     if (!instagramUserId || !profile.username) throw new Error("Instagram did not return a professional profile.");
 
+    const existing = await env.DB.prepare(
+      "SELECT brand FROM instagram_accounts WHERE owner_id = ? AND instagram_user_id = ? AND brand <> ?",
+    ).bind(savedState.owner_id, instagramUserId, savedState.brand).first<{ brand: string }>();
+    if (existing) {
+      const destination = new URL(metaHomeUrl("account_already_linked"));
+      destination.searchParams.set("ig_username", profile.username);
+      destination.searchParams.set("linked_brand", existing.brand);
+      return Response.redirect(destination.toString(), 303);
+    }
+
     const encryptedToken = await encryptInstagramToken(longToken.access_token);
     const now = Date.now();
     const expiresAt = now + Number(longToken.expires_in) * 1000;
@@ -78,6 +88,9 @@ export async function GET(request: Request) {
     return Response.redirect(metaHomeUrl("connected"), 303);
   } catch (error) {
     console.error("Instagram account connection failed", error instanceof Error ? error.message.slice(0, 240) : "unknown error");
+    if (error instanceof Error && /UNIQUE constraint failed: instagram_accounts\./i.test(error.message)) {
+      return Response.redirect(metaHomeUrl("account_conflict"), 303);
+    }
     return Response.redirect(metaHomeUrl("connection_failed"), 303);
   }
 }
