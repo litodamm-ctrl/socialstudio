@@ -137,6 +137,7 @@ export default function Home() {
   const [week, setWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [posts, setPosts] = useState<Post[]>([]);
   const [connectedAccounts, setConnectedAccounts] = useState<Record<string, string>>({});
+  const [connectionMove, setConnectionMove] = useState<{ brand: string; target: string } | null>(null);
   const [connectedFacebookPages, setConnectedFacebookPages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -550,6 +551,27 @@ export default function Home() {
     }
   }
 
+  async function manageConnection(accountBrand: string, target?: string) {
+    const username = connectedAccounts[accountBrand];
+    if (!username) return;
+    const description = target ? `Mover @${username} de ${accountBrand} a ${target}` : `Desconectar @${username} de ${accountBrand}`;
+    if (!window.confirm(`${description}. Se pausará el piloto de las marcas afectadas, se pasarán sus publicaciones programadas a borrador y se desvinculará Facebook. El historial publicado se conserva. ¿Continuar?`)) return;
+    setBrandBusy(true);
+    try {
+      const response = await fetch("/api/meta/accounts/manage", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: target ? "move" : "disconnect", brand: accountBrand, username, target }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "No se pudo cambiar la conexión.");
+      setConnectionMove(null);
+      await reloadPosts();
+      setBrandAutoSchedule(false); setBrandAutoCrosspost(false);
+      setToast(`${target ? `@${username} ahora está vinculado a ${target}` : `@${username} desconectado de Social Studio`}. Revisa los borradores antes de reprogramarlos. Facebook deberá vincularse de nuevo.`);
+    } catch (error) { setToast(error instanceof Error ? error.message : "No se pudo cambiar la conexión."); }
+    finally { setBrandBusy(false); }
+  }
+
   function connectAccount(accountBrand: string) {
     // OAuth must navigate the whole browser to the route that starts Meta's redirect flow.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
@@ -804,7 +826,7 @@ export default function Home() {
 
           <section className="connection-banner">
             <div className="connection-symbol"><Camera size={18} /></div>
-            <div className="connection-text"><strong>{connectedBrands.length ? `Instagram conectado${connectedBrands.length === 1 ? "" : "s"}: ${connectedBrands.map((item) => `@${connectedAccounts[item.name]}`).join(", ")}` : "Conecta una cuenta de Instagram"}</strong><span>{connectedBrands.length ? "Feed, Reels e historias de imagen se publican según el calendario y los permisos de cada cuenta." : "Autoriza tu cuenta profesional de Instagram para activar la publicación programada."}</span></div>
+            <div className="connection-text"><strong>{connectedBrands.length ? `Instagram conectado${connectedBrands.length === 1 ? "" : "s"}: ${connectedBrands.map((item) => `${item.name}: @${connectedAccounts[item.name]}`).join(" · ")}` : "Conecta una cuenta de Instagram"}</strong><span>{connectedBrands.length ? "Feed, Reels e historias de imagen se publican según el calendario y los permisos de cada cuenta." : "Autoriza tu cuenta profesional de Instagram para activar la publicación programada."}</span></div>
             <button className="banner-link" onClick={() => connectedBrands.length ? (setBrand(connectedBrands[0].name), openComposer()) : connectAccount(brands[0].name)}>{connectedBrands.length ? "Preparar contenido" : "Conectar cuenta"} <ChevronRight size={16} /></button>
             <button className="banner-dismiss" aria-label="Cerrar aviso" onClick={(event) => event.currentTarget.parentElement?.classList.add("banner-hidden")}><X size={16} /></button>
           </section>
@@ -841,7 +863,8 @@ export default function Home() {
             </div>
 
             <aside className="accounts-panel"><div className="panel-heading"><div><h2>Cuentas</h2><p>Canales para publicar</p></div><button className="text-button manage-brands-inline" onClick={() => void openBrandManager()}>Gestionar marcas</button></div>
-              <div className="account-connect-list">{brands.map((item) => <div className="account-connect-row" key={item.name}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span><span className="account-connect-copy"><strong>{item.name}</strong><small>{connectedAccounts[item.name] ? `@${connectedAccounts[item.name]}` : item.handle}</small></span>{connectedAccounts[item.name] ? <span className="connected-label">Conectada</span> : <button className="connect-mini" onClick={() => connectAccount(item.name)}><Link2 size={14} /> Conectar</button>}</div>)}</div>
+              {connectionMove && <div className="brand-add-box"><strong>Mover @{connectedAccounts[connectionMove.brand]} desde {connectionMove.brand}</strong><label className="field-label" htmlFor="connection-target">Marca de destino</label><select id="connection-target" className="field-control" value={connectionMove.target} onChange={event => setConnectionMove({ ...connectionMove, target: event.target.value })}><option value="">Selecciona una marca</option>{brands.filter(item => item.name !== connectionMove.brand && !connectedAccounts[item.name]).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select><p className="field-hint">Se pausarán los pilotos de ambas marcas y sus publicaciones programadas quedarán como borradores en su marca original. Facebook deberá conectarse nuevamente.</p><button type="button" className="primary-button" disabled={brandBusy || !connectionMove.target} onClick={() => void manageConnection(connectionMove.brand, connectionMove.target)}>Mover cuenta</button><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => setConnectionMove(null)}>Cancelar</button></div>}
+              <div className="account-connect-list">{brands.map((item) => <div className="account-connect-row" key={item.name}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span><span className="account-connect-copy"><strong>{item.name}</strong><small>{connectedAccounts[item.name] ? `@${connectedAccounts[item.name]}` : item.handle}</small></span>{connectedAccounts[item.name] ? <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}><span className="connected-label">Conectada</span><button type="button" className="connect-mini" disabled={brandBusy} onClick={() => setConnectionMove({ brand: item.name, target: "" })}>Cambiar de marca</button><button type="button" className="connect-mini" disabled={brandBusy} onClick={() => void manageConnection(item.name)}>Desconectar</button></div> : <button className="connect-mini" onClick={() => connectAccount(item.name)}><Link2 size={14} /> Conectar</button>}</div>)}</div>
               <div className="account-note"><Sparkles size={16} /><span>{connectedBrands.length ? "Publicación automática activa para imágenes y Reels." : "Conecta una cuenta profesional de Instagram para activar la publicación automática."}</span></div>
             </aside>
           </section>
