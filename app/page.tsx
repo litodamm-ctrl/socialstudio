@@ -176,6 +176,7 @@ export default function Home() {
   const [editingBrandId, setEditingBrandId] = useState("");
   const [brandEssence, setBrandEssence] = useState("");
   const [brandWebsites, setBrandWebsites] = useState<string[]>([""]);
+  const [websiteChecks, setWebsiteChecks] = useState<Array<{ url: string; message: string }>>([]);
   const [brandDrive, setBrandDrive] = useState("");
   const [brandAutoSchedule, setBrandAutoSchedule] = useState(false);
   const [brandAutoCrosspost, setBrandAutoCrosspost] = useState(false);
@@ -568,6 +569,7 @@ export default function Home() {
   }
 
   function editBrand(item: Brand) {
+    setWebsiteChecks([]);
     setEditingBrandId(item.id);
     setBrandEssence(item.essence);
     setBrandWebsites(item.websiteUrls?.length ? [...item.websiteUrls] : [item.websiteUrl || ""]);
@@ -616,6 +618,21 @@ export default function Home() {
     } catch (error) {
       setToast(error instanceof Error ? error.message : "No se pudo agregar la marca.");
     } finally { setBrandBusy(false); }
+  }
+
+  async function checkBrandWebsites() {
+    setBrandBusy(true);
+    setWebsiteChecks([]);
+    try {
+      const response = await fetch("/api/brands/websites/check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: brandWebsites }),
+      });
+      const data = await response.json() as { error?: string; results?: Array<{ url: string; message: string }> };
+      if (!response.ok) throw new Error(data.error || "No se pudieron comprobar las webs.");
+      setWebsiteChecks(data.results ?? []);
+    } catch (error) { setToast(error instanceof Error ? error.message : "No se pudieron comprobar las webs."); }
+    finally { setBrandBusy(false); }
   }
 
   async function saveBrandProfile() {
@@ -830,6 +847,8 @@ export default function Home() {
               <button type="button" className="icon-button" aria-label={`Quitar sitio web ${index + 1}`} title="Quitar sitio web" disabled={brandBusy} onClick={() => setBrandWebsites(current => current.length > 1 ? current.filter((_, position) => position !== index) : [""])}><X size={17} /></button>
             </div>)}
             <button type="button" className="secondary-button brand-website-add" disabled={brandBusy || brandWebsites.length >= 10} onClick={() => setBrandWebsites(current => current.length < 10 ? [...current, ""] : current)}><Plus size={14} /> Agregar sitio web <span>{brandWebsites.length}/10</span></button>
+            <button type="button" className="secondary-button" disabled={brandBusy || !brandWebsites.some(url => url.trim())} onClick={() => void checkBrandWebsites()}><RefreshCw size={14} /> {brandBusy ? "Espera…" : "Comprobar webs"}</button>
+            <div aria-live="polite">{websiteChecks.map(result => <div className="field-hint" key={result.url}><strong>{result.url}</strong><br />{result.message}</div>)}</div>
           </div>
           <div className="field-hint">Agrega hasta 10 páginas públicas con información e imágenes de tus proyectos. El agente consultará una fuente por pieza, sin mezclar precios, beneficios ni imágenes de proyectos distintos. Usa enlaces directos al proyecto y guarda los cambios.</div>
           <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Pega el enlace de la carpeta y pulsa Conectar Google Drive. Guardaremos la carpeta antes de abrir Google.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" type="button" disabled={brandBusy} onClick={() => void connectBrandDrive(managedBrand.id)}><Link2 size={13} /> {brandBusy ? "Conectando…" : "Conectar Google Drive"}</button>}<span>La conexión solo da acceso de lectura.</span></div>

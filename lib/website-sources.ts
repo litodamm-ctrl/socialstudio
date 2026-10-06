@@ -132,21 +132,39 @@ export function selectWebsiteIndex(pages: Array<{ url: string; title?: string }>
   return hash % pages.length;
 }
 
+export async function inspectWebsite(url: string, read: typeof fetchPublicResource = fetchPublicResource): Promise<{ page: WebsitePage | null; error?: string }> {
+  try {
+    const resource = await read(url);
+    if (!["text/html", "application/xhtml+xml", "text/plain"].includes(resource.contentType)) return { page: null, error: "La respuesta no es una página de texto o HTML." };
+    const page = extractWebsitePage(resource.bytes.toString("utf8"), resource.url);
+    if (page.text.length < 40) return { page: null, error: "La página no contiene texto suficiente; puede requerir JavaScript." };
+    return { page };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    const message = error instanceof Error ? error.message : "Error de conexión";
+    if (["EAI_AGAIN", "ENOTFOUND"].includes(code ?? "") || /DNS timeout/.test(message)) return { page: null, error: "No se pudo resolver el dominio (DNS)." };
+    if (/timeout|tardó demasiado/i.test(message) || code === "ETIMEDOUT") return { page: null, error: "La web no respondió dentro del tiempo permitido." };
+    if (/^Web HTTP \d+$/.test(message)) return { page: null, error: `El servidor respondió ${message.replace("Web ", "")}.` };
+    if (/límite de tamaño|red privada|redirecciones/.test(message)) return { page: null, error: message };
+    // Do not expose arbitrary upstream messages, credentials or response bodies.
+    return { page: null, error: `No se pudo establecer la conexión segura${code && /^[A-Z_0-9]+$/.test(code) ? ` (${code})` : ""}.` };
+  }
+}
+
 export async function loadWebsiteSource(urls: string[], brief: string, seed: string): Promise<WebsitePage | null> {
   if (!urls.length) return null;
   const pages: Array<WebsitePage | null> = Array(urls.length).fill(null);
+  const errors: string[] = Array(urls.length).fill("");
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(3, urls.length) }, async () => {
     while (cursor < urls.length) { const index = cursor++;
-      try { const resource = await fetchPublicResource(urls[index]);
-        if (!["text/html", "application/xhtml+xml", "text/plain"].includes(resource.contentType)) continue;
-        const page = extractWebsitePage(resource.bytes.toString("utf8"), resource.url);
-        if (page.text.length >= 40) pages[index] = page;
-      } catch { /* Surface selected-source failure below, never substitute another project. */ }
+      const result = await inspectWebsite(urls[index]);
+      pages[index] = result.page;
+      errors[index] = result.error ?? "";
     }
   }));
   const selected = selectWebsiteIndex(urls.map((url, index) => ({ url, title: pages[index]?.title })), brief, seed);
-  if (!pages[selected]) throw new WebsiteSourceError("No se pudo leer la web del proyecto seleccionado. Revisa sus fuentes antes de generar contenido.");
+  if (!pages[selected]) throw new WebsiteSourceError(`${new URL(urls[selected]).hostname}: ${errors[selected] || "No se pudo leer la web del proyecto seleccionado."}`);
   return pages[selected];
 }
 
