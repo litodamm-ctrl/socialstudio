@@ -1,6 +1,7 @@
 import { env } from "@/lib/runtime";
 import { ensureDefaultBrands } from "@/lib/brands";
 import { ensureFacebookTables } from "@/lib/facebook";
+import { normalizeWebsiteUrls } from "@/lib/website-sources";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const ownerId = request.headers.get("oai-authenticated-user-id");
@@ -24,10 +25,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (value.length > 4000) return Response.json({ error: "La esencia de marca admite hasta 4.000 caracteres." }, { status: 400 });
       fields.push("brand_essence = ?"); values.push(value);
     }
-    if (typeof input.websiteUrl === "string") {
-      const value = input.websiteUrl.trim();
-      if (value && !validPublicUrl(value)) return Response.json({ error: "Agrega una dirección web pública que empiece por https://." }, { status: 400 });
-      fields.push("website_url = ?"); values.push(value);
+    if ("websiteUrls" in input || "websiteUrl" in input) {
+      let urls: string[];
+      try {
+        urls = normalizeWebsiteUrls("websiteUrls" in input ? input.websiteUrls : [input.websiteUrl]);
+      } catch (error) {
+        return Response.json({ error: error instanceof Error ? error.message : "Revisa las direcciones web." }, { status: 400 });
+      }
+      fields.push("website_urls = ?", "website_url = ?"); values.push(JSON.stringify(urls), urls[0] ?? "");
     }
     if (typeof input.driveFolderUrl === "string") {
       const value = input.driveFolderUrl.trim();
@@ -78,11 +83,4 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     console.error("Unable to update brand", error instanceof Error ? error.message : "unknown error");
     return Response.json({ error: "No se pudo actualizar la marca." }, { status: 503 });
   }
-}
-
-function validPublicUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && !["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(url.hostname);
-  } catch { return false; }
 }

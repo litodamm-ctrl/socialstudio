@@ -19,3 +19,4 @@
 .automation-progress progress { width: 100%; accent-color: #557b66; }
 .automation-progress .secondary-button { justify-self: start; }
 .calendar-post-edit { position: absolute; top: 7px; right: 29px; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: #ffffffd9; color: #557b66; cursor: pointer; }
+.brand-website-list{display:grid;gap:8px}.brand-website-row{display:flex;align-items:center;gap:7px}.brand-website-row .field-control{min-width:0;flex:1}.brand-website-row .icon-button{flex:none}.brand-website-add{display:flex;align-items:center;justify-content:center;gap:6px;min-height:36px}.brand-website-add span{margin-left:auto;font-size:11px;color:#7c8981}.brand-website-add:disabled{opacity:.55;cursor:not-allowed}

@@ -4,6 +4,7 @@ import { loadGoogleDriveMaterials } from "@/lib/google-drive";
 import { ensureDefaultBrands, isActiveBrand } from "@/lib/brands";
 import { rotateReferences, validPublicationDate } from "@/lib/creative-references";
 import sharp from "sharp";
+import { storedWebsiteUrls, loadWebsiteSource, fetchPublicResource, WebsiteSourceError } from "@/lib/website-sources";
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const maxDuration = 300;
@@ -45,20 +46,38 @@ export async function POST(request: Request) {
   if (callToAction.length > 140) return Response.json({ error: "La llamada a la acción debe tener máximo 140 caracteres." }, { status: 400 });
 
   try {
-    const brandProfile = await env.DB.prepare("SELECT id, brand_essence, website_url, drive_folder_url FROM brand_registry WHERE owner_id = ? AND name = ? AND active = 1")
-      .bind(ownerId, brand).first<{ id: string; brand_essence: string; website_url: string; drive_folder_url: string }>();
+    const brandProfile = await env.DB.prepare("SELECT id, brand_essence, website_url, website_urls, drive_folder_url FROM brand_registry WHERE owner_id = ? AND name = ? AND active = 1")
+      .bind(ownerId, brand).first<{ id: string; brand_essence: string; website_url: string; website_urls: string; drive_folder_url: string }>();
+    const websiteUrls = storedWebsiteUrls(brandProfile?.website_urls, brandProfile?.website_url);
     const [websiteContext, driveContext, driveMaterials, assetRows, recentPosts] = await Promise.all([
-      brandProfile?.website_url ? readWebsiteContext(brandProfile.website_url) : Promise.resolve(""),
-      brandProfile?.drive_folder_url ? readDriveDocumentContext(brandProfile.drive_folder_url) : Promise.resolve(""),
-      brandProfile ? loadGoogleDriveMaterials(env.DB, ownerId, brandProfile.id, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, decryptInstagramToken, rotationSeed) : Promise.resolve({ text: "", content: [] }),
+      loadWebsiteSource(websiteUrls, brief, rotationSeed),
+      !websiteUrls.length && brandProfile?.drive_folder_url ? readDriveDocumentContext(brandProfile.drive_folder_url) : Promise.resolve(""),
+      !websiteUrls.length && brandProfile ? loadGoogleDriveMaterials(env.DB, ownerId, brandProfile.id, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, decryptInstagramToken, rotationSeed) : Promise.resolve({ text: "", content: [] }),
       brandProfile ? env.DB.prepare("SELECT name, content_type, object_key, file_size FROM brand_assets WHERE owner_id = ? AND brand_id = ? ORDER BY created_at DESC LIMIT 100")
         .bind(ownerId, brandProfile.id).all<{ name: string; content_type: string; object_key: string; file_size: number }>() : Promise.resolve({ results: [] }),
       env.DB.prepare("SELECT caption FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled', 'published') ORDER BY created_at DESC LIMIT 15").bind(ownerId, brand).all<{ caption: string }>(),
     ]);
     const referenceContent: Array<Record<string, string>> = [];
+    if (websiteContext) {
+      for (const imageUrl of websiteContext.images.slice(0, 8)) {
+        if (referenceContent.length >= 3) break;
+        try {
+          const resource = await fetchPublicResource(imageUrl, 5 * 1024 * 1024);
+          if (!["image/jpeg", "image/png", "image/webp"].includes(resource.contentType)) continue;
+          const decoder = sharp(resource.bytes, { limitInputPixels: 20_000_000 });
+          const metadata = await decoder.metadata();
+          if (!["jpeg", "png", "webp"].includes(metadata.format ?? "") || (metadata.width ?? 0) < 300 || (metadata.height ?? 0) < 200) continue;
+          const bytes = await decoder.rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+          referenceContent.push({ type: "input_image", image_url: `data:image/jpeg;base64,${bytes.toString("base64")}`, detail: "high" });
+        } catch { /* Skip invalid, inaccessible and unsafe image resources. */ }
+      }
+      if (!referenceContent.length) return Response.json({ error: "La web seleccionada no tiene imágenes públicas utilizables. Agrega una página del proyecto con fotografías accesibles." }, { status: 422 });
+    }
     const assetNotes: string[] = [];
     let referenceBytes = 0;
     for (const asset of rotateReferences(assetRows.results ?? [], rotationSeed)) {
+      // Unlabelled brochures/product photos may belong to a different project.
+      if (websiteContext && !/logo|identidad|brand.?mark/i.test(asset.name)) continue;
       if (!env.BUCKET || asset.file_size > 7 * 1024 * 1024 || referenceBytes + asset.file_size > 10 * 1024 * 1024) {
         assetNotes.push(asset.name);
         continue;
@@ -74,9 +93,9 @@ export async function POST(request: Request) {
     }
     const inputContent = [
       { type: "input_text", text: `Fecha prevista: ${publicationDate} (America/Bogota). Formato: ${mediaType}. Temas y textos ya utilizados: ${(recentPosts.results ?? []).map(post => post.caption.slice(0, 400)).join(" | ") || "Sin publicaciones previas"}. Evita repetir esos textos y enfoques.` },
-      { type: "input_text", text: [`Marca: ${brand}`, `Objetivo: ${objective}`, `Brief confirmado por el usuario: ${brief}`, `CTA solicitado: ${callToAction || "Propón una llamada a la acción prudente que no invente información."}`, brandProfile?.brand_essence ? `Esencia de marca: ${brandProfile.brand_essence}` : "", websiteContext ? `Información de la web oficial: ${websiteContext}` : "", driveContext ? `Información de Google Drive: ${driveContext}` : "", driveMaterials.text ? `Materiales recientes de la carpeta conectada de Google Drive: ${driveMaterials.text}` : "", assetNotes.length ? `Otros recursos disponibles: ${assetNotes.join(" | ")}` : ""].filter(Boolean).join("\n") },
+      { type: "input_text", text: [`Marca: ${brand}`, `Objetivo: ${objective}`, `Brief confirmado por el usuario: ${brief}`, `CTA solicitado: ${callToAction || "Propón una llamada a la acción prudente que no invente información."}`, brandProfile?.brand_essence ? `Esencia de marca: ${brandProfile.brand_essence}` : "", websiteContext ? `ÚNICO PROYECTO SELECCIONADO. Fuente: ${websiteContext.url}. Título: ${websiteContext.title}. Texto público: ${websiteContext.text}. Las primeras imágenes adjuntas proceden exclusivamente de esta página. No uses información ni fotos de otros proyectos.` : "", !websiteContext && driveContext ? `Información de Google Drive: ${driveContext}` : "", !websiteContext && driveMaterials.text ? `Materiales recientes de la carpeta conectada de Google Drive: ${driveMaterials.text}` : "", assetNotes.length ? `Otros recursos disponibles: ${assetNotes.join(" | ")}` : ""].filter(Boolean).join("\n") },
       ...referenceContent,
-      ...driveMaterials.content,
+      ...(!websiteContext ? driveMaterials.content : []),
     ];
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -91,8 +110,9 @@ export async function POST(request: Request) {
           "Entrega un titular breve, un copy de Instagram de máximo 1.000 caracteres, 3 a 5 hashtags pertinentes, un concepto visual y un prompt visual detallado.",
           mediaType === "Historia" ? "Genera una historia vertical. Incluye en la imagen el titular, mensaje breve y CTA: la historia se publica sin caption visible. Mantén todo el texto grande, legible y alejado de los bordes superiores e inferiores. No dibujes botones, enlaces pulsables, encuestas ni funciones interactivas ficticias." : "Genera un creativo cuadrado 1:1 para el feed, con jerarquía visual clara y un titular breve legible.",
           "Conserva fielmente los productos reales de las referencias y la identidad de esta marca. No mezcles marcas ni inventes logos; utiliza el logo suministrado cuando sea reproducible fielmente, o el nombre en texto limpio.",
+          websiteContext ? "Comunica exclusivamente el proyecto de la fuente seleccionada. La esencia de la marca define voz y estilo, no autoriza trasladar precios, amenidades, imágenes ni datos de otro proyecto. Conserva las fotografías inmobiliarias como referencias reales; no inventes construcciones, acabados, vistas ni amenidades. Una visualización o render de la fuente debe identificarse como imagen de referencia." : "",
           brandProfile?.brand_essence ? `Esencia y guía de marca: ${brandProfile.brand_essence}` : "No hay guía de marca adicional; conserva una voz clara y profesional.",
-          driveContext || driveMaterials.text || driveMaterials.content.length ? "Usa el material de Google Drive como referencia confirmada para la marca." : "",
+          !websiteContext && (driveContext || driveMaterials.text || driveMaterials.content.length) ? "Usa el material de Google Drive como referencia de la marca; verifica su vigencia." : "",
           "Devuelve los textos en el formato estructurado solicitado. Luego genera exactamente una imagen a partir del concepto visual.",
         ].join(" "),
         input: [{ role: "user", content: inputContent }],
@@ -157,45 +177,12 @@ export async function POST(request: Request) {
       visualConcept: copy.visualConcept ?? "",
       imagePrompt: copy.imagePrompt,
       mediaUrl: `/api/media/${id}`,
+      sourceWebsite: websiteContext?.url ?? null,
     }, { status: 201 });
   } catch (error) {
+    if (error instanceof WebsiteSourceError) return Response.json({ error: error.message }, { status: 422 });
     console.error("Social Studio creative agent failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
     return Response.json({ error: "No se pudo crear el contenido. Intenta de nuevo en un momento." }, { status: 502 });
-  }
-}
-
-async function readWebsiteContext(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" || !url.hostname || !url.hostname.includes(".") || /^[\d.]+$/.test(url.hostname) || url.hostname.includes(":")) return "";
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "manual", headers: { Accept: "text/html,text/plain" } });
-    if (!response.ok || !response.body) return "";
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (total < 96_000) {
-      const { done, value: chunk } = await reader.read();
-      if (done) break;
-      const slice = chunk.subarray(0, 96_000 - total);
-      chunks.push(slice); total += slice.length;
-      if (slice.length !== chunk.length) break;
-    }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    return new TextDecoder().decode(bytes)
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;|&#160;/gi, " ")
-      .replace(/&amp;/gi, "&")
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;|&apos;/gi, "'")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 6000);
-  } catch {
-    return "";
   }
 }
 

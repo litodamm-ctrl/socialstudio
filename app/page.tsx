@@ -92,6 +92,7 @@ type Brand = {
   active: boolean;
   essence: string;
   websiteUrl: string;
+  websiteUrls: string[];
   driveFolderUrl: string;
   driveConnected: boolean;
   autoSchedule: boolean;
@@ -129,7 +130,7 @@ function statusLabel(status: Post["status"]) {
 }
 
 export default function Home() {
-  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
+  const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [week, setWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [posts, setPosts] = useState<Post[]>([]);
@@ -173,7 +174,7 @@ export default function Home() {
   const [brandBusy, setBrandBusy] = useState(false);
   const [editingBrandId, setEditingBrandId] = useState("");
   const [brandEssence, setBrandEssence] = useState("");
-  const [brandWebsite, setBrandWebsite] = useState("");
+  const [brandWebsites, setBrandWebsites] = useState<string[]>([""]);
   const [brandDrive, setBrandDrive] = useState("");
   const [brandAutoSchedule, setBrandAutoSchedule] = useState(false);
   const [brandAutoCrosspost, setBrandAutoCrosspost] = useState(false);
@@ -564,7 +565,7 @@ export default function Home() {
   function editBrand(item: Brand) {
     setEditingBrandId(item.id);
     setBrandEssence(item.essence);
-    setBrandWebsite(item.websiteUrl);
+    setBrandWebsites(item.websiteUrls?.length ? [...item.websiteUrls] : [item.websiteUrl || ""]);
     setBrandDrive(item.driveFolderUrl);
     setBrandAutoSchedule(item.autoSchedule);
     setBrandAutoCrosspost(item.autoCrosspost);
@@ -622,7 +623,7 @@ export default function Home() {
     try {
       const response = await fetch(`/api/brands/${managedBrand.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ essence: brandEssence, websiteUrl: brandWebsite, driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime, storyTime: brandStoryTime, autoStories: brandAutoStories }),
+        body: JSON.stringify({ essence: brandEssence, websiteUrls: brandWebsites.map(url => url.trim()).filter(Boolean), driveFolderUrl: brandDrive, autoSchedule: brandAutoSchedule, autoCrosspost: brandAutoCrosspost, postingDays: brandPostingDays, preferredTime: brandPreferredTime, storyTime: brandStoryTime, autoStories: brandAutoStories }),
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo guardar el perfil.");
@@ -817,7 +818,15 @@ export default function Home() {
         {managedBrand ? <>
           <div className="brand-agent-heading"><div className="account-dot" style={{ background: managedBrand.color }}>{managedBrand.initials}</div><div><strong>Agente de {managedBrand.name}</strong><span>Perfil independiente para esta marca</span></div><span className={`brand-status-pill ${managedBrand.active ? "" : "archived"}`}>{managedBrand.active ? "Activa" : "Archivada"}</span></div>
           <label className="field-label field-gap" htmlFor="brand-essence">Esencia y reglas de marca</label><textarea id="brand-essence" className="caption-control brand-essence-control" maxLength={4000} value={brandEssence} onChange={(event) => setBrandEssence(event.target.value)} placeholder="Describe personalidad, público, productos, beneficios confirmados, palabras que usa o evita y estilo visual…" /><div className="field-hint">El agente usa estas reglas para redactar el copy y crear los creativos.</div>
-          <label className="field-label field-gap" htmlFor="brand-website"><Globe size={14} /> Sitio web oficial</label><input id="brand-website" className="field-control" type="url" value={brandWebsite} onChange={(event) => setBrandWebsite(event.target.value)} placeholder="https://tumarca.com" /><div className="field-hint">Al generar, el agente leerá texto público de esta dirección.</div>
+          <label className="field-label field-gap" htmlFor="brand-website-0"><Globe size={14} /> Sitios web y proyectos</label>
+          <div className="brand-website-list">
+            {brandWebsites.map((url, index) => <div className="brand-website-row" key={index}>
+              <input id={`brand-website-${index}`} aria-label={`Sitio web ${index + 1}`} className="field-control" type="url" maxLength={2048} value={url} disabled={brandBusy} onChange={(event) => setBrandWebsites(current => current.map((value, position) => position === index ? event.target.value : value))} placeholder="https://proyecto.com" />
+              <button type="button" className="icon-button" aria-label={`Quitar sitio web ${index + 1}`} title="Quitar sitio web" disabled={brandBusy} onClick={() => setBrandWebsites(current => current.length > 1 ? current.filter((_, position) => position !== index) : [""])}><X size={17} /></button>
+            </div>)}
+            <button type="button" className="secondary-button brand-website-add" disabled={brandBusy || brandWebsites.length >= 10} onClick={() => setBrandWebsites(current => current.length < 10 ? [...current, ""] : current)}><Plus size={14} /> Agregar sitio web <span>{brandWebsites.length}/10</span></button>
+          </div>
+          <div className="field-hint">Agrega hasta 10 páginas públicas con información e imágenes de tus proyectos. El agente consultará una fuente por pieza, sin mezclar precios, beneficios ni imágenes de proyectos distintos. Usa enlaces directos al proyecto y guarda los cambios.</div>
           <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Guarda el enlace de la carpeta y conecta Google para que el agente lea Docs, PDFs, imágenes y textos recientes.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" disabled={!managedBrand.driveFolderUrl || brandBusy} onClick={() => connectBrandDrive(managedBrand.id)}><Link2 size={13} /> Conectar Google Drive</button>}<span>La conexión solo da acceso de lectura.</span></div>
           <div className="facebook-brand-box"><div><strong>Facebook</strong><small>{connectedFacebookPages[managedBrand.name] ? `Página vinculada: ${connectedFacebookPages[managedBrand.name]}` : "Vincula la Página asociada a Instagram"}</small></div>{!connectedFacebookPages[managedBrand.name] && <button className="connect-mini" disabled={!connectedAccounts[managedBrand.name]} onClick={() => connectFacebookAccount(managedBrand.name)}><Link2 size={13} /> Vincular</button>}<label className="autopilot-toggle facebook-crosspost-toggle"><input type="checkbox" checked={brandAutoCrosspost} disabled={!connectedFacebookPages[managedBrand.name]} onChange={(event) => setBrandAutoCrosspost(event.target.checked)} /><span><strong>Replicar en Facebook al publicar en Instagram</strong><small>Requiere Facebook Login y una Página vinculada a esta cuenta de Instagram.</small></span></label></div>
           <div className="field-label field-gap">Recursos de marca <span className="field-hint">Logos, brochures, imágenes de referencia y documentos</span></div>
