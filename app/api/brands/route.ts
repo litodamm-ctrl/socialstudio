@@ -1,6 +1,7 @@
 import { env } from "@/lib/runtime";
 import { brandInitials, DEFAULT_BRANDS, ensureDefaultBrands } from "@/lib/brands";
 import { ensureAutopilotTables } from "@/lib/autopilot";
+import { DNEYLA_ESSENCE, DNEYLA_WEBSITE, isDneyla } from "@/lib/brand-presets";
 
 type BrandRow = {
   id: string; name: string; handle: string; color: string; initials: string; active: number;
@@ -23,6 +24,7 @@ function serialize(row: BrandRow) {
       if (urls.length) websiteUrls = urls;
     }
   } catch { /* preserve the original website */ }
+  if (isDneyla(row.name) && !websiteUrls.length) websiteUrls = [DNEYLA_WEBSITE];
   let postingDays: number[] = [2, 4, 6];
   try {
     const parsed: unknown = JSON.parse(row.posting_days);
@@ -30,7 +32,7 @@ function serialize(row: BrandRow) {
   } catch { /* keep default days */ }
   return {
     id: row.id, name: row.name, handle: row.handle, color: row.color, initials: row.initials,
-    active: Boolean(row.active), essence: row.brand_essence, websiteUrl: websiteUrls[0] ?? "", websiteUrls,
+    active: Boolean(row.active), essence: row.brand_essence || (isDneyla(row.name) ? DNEYLA_ESSENCE : ""), websiteUrl: websiteUrls[0] ?? "", websiteUrls,
     driveFolderUrl: row.drive_folder_url, driveConnected: Boolean(row.drive_connected), autoSchedule: Boolean(row.auto_schedule), autoCrosspost: Boolean(row.auto_crosspost),
     postingDays, preferredTime: row.preferred_time, storyTime: row.story_time, autoStories: Boolean(row.auto_stories),
   };

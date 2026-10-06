@@ -12,6 +12,7 @@ import {
 import { es } from "date-fns/locale";
 import Image from "next/image";
 import { prepareDriveConnection } from "@/lib/drive-connect-client";
+import { DNEYLA_ESSENCE, DNEYLA_WEBSITE, isDneyla } from "@/lib/brand-presets";
 import {
   Camera,
   CalendarDays,
@@ -838,6 +839,7 @@ export default function Home() {
         <div className="brand-add-box"><strong>Agregar una marca</strong><div className="brand-add-fields"><input className="field-control" maxLength={60} value={brandNameInput} onChange={(event) => setBrandNameInput(event.target.value)} placeholder="Nombre de la marca" /><input className="field-control" maxLength={40} value={brandHandleInput} onChange={(event) => setBrandHandleInput(event.target.value)} placeholder="Usuario de Instagram (opcional)" /><button className="primary-button" onClick={() => void addBrand()} disabled={brandBusy || brandNameInput.trim().length < 2}><Plus size={15} /> Agregar</button></div></div>
         <div className="managed-brand-list" aria-label="Marcas activas">{brands.map((item) => <button className={`managed-brand-chip ${editingBrandId === item.id ? "selected" : ""}`} key={item.id} onClick={() => editBrand(item)}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span>{item.name}</button>)}</div>
         {managedBrand ? <>
+          {isDneyla(managedBrand.name) && <div className="brand-add-box"><strong>Agente creativo D’Neyla</strong><p className="field-hint">Mejora fotos reales de la web y de Drive con el estilo de la marca. Sin precios ni “pide hoy”. Usa una carpeta exclusiva con fotos de productos, logo y publicaciones aprobadas.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => { setBrandEssence(DNEYLA_ESSENCE); setBrandWebsites(current => current.some(url => url.trim()) ? current : [DNEYLA_WEBSITE]); setToast("Guía D’Neyla cargada. Pulsa Guardar perfil para conservarla."); }}><Sparkles size={14} /> Cargar guía recomendada</button></div>}
           <div className="brand-agent-heading"><div className="account-dot" style={{ background: managedBrand.color }}>{managedBrand.initials}</div><div><strong>Agente de {managedBrand.name}</strong><span>Perfil independiente para esta marca</span></div><span className={`brand-status-pill ${managedBrand.active ? "" : "archived"}`}>{managedBrand.active ? "Activa" : "Archivada"}</span></div>
           <label className="field-label field-gap" htmlFor="brand-essence">Esencia y reglas de marca</label><textarea id="brand-essence" className="caption-control brand-essence-control" maxLength={4000} value={brandEssence} onChange={(event) => setBrandEssence(event.target.value)} placeholder="Describe personalidad, público, productos, beneficios confirmados, palabras que usa o evita y estilo visual…" /><div className="field-hint">El agente usa estas reglas para redactar el copy y crear los creativos.</div>
           <label className="field-label field-gap" htmlFor="brand-website-0"><Globe size={14} /> Sitios web y proyectos</label>
