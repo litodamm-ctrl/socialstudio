@@ -1,5 +1,6 @@
 "use client";
 
+import { isManglar, MANGLAR_ESSENCE } from "@/lib/manglar-preset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
@@ -161,6 +162,7 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [instagramReferences, setInstagramReferences] = useState<{brandId:string;message:string;images:string[];captions:string}>({brandId:"",message:"",images:[],captions:""});
   const [postsOpen, setPostsOpen] = useState(false);
   const [postsBrandFilter, setPostsBrandFilter] = useState("");
   const [agentOpen, setAgentOpen] = useState(false);
@@ -676,6 +678,20 @@ export default function Home() {
     finally { setBrandBusy(false); }
   }
 
+  async function checkInstagramReferences() {
+    if (!managedBrand) return;
+    const brandId = managedBrand.id;
+    setBrandBusy(true);
+    setInstagramReferences({brandId,message:"Consultando Instagram…",images:[],captions:""});
+    try {
+      const response = await fetch(`/api/brands/${brandId}/instagram-references`, {cache:"no-store"});
+      const data = await response.json() as {username?:string;postsRead?:number;images?:string[];captions?:string;error?:string};
+      if (!response.ok) throw new Error(data.error || "No se pudo consultar Instagram.");
+      setInstagramReferences({brandId,message:`@${data.username}: ${data.postsRead} publicaciones consultadas y ${data.images?.length ?? 0} fotos de referencia verificadas.`,images:data.images ?? [],captions:data.captions ?? ""});
+    } catch (error) { setInstagramReferences({brandId,message:error instanceof Error ? error.message : "No se pudo consultar Instagram.",images:[],captions:""}); }
+    finally { setBrandBusy(false); }
+  }
+
   async function checkBrandWebsites() {
     setBrandBusy(true);
     setWebsiteChecks([]);
@@ -907,6 +923,7 @@ export default function Home() {
         <div className="brand-add-box"><strong>Agregar una marca</strong><div className="brand-add-fields"><input className="field-control" maxLength={60} value={brandNameInput} onChange={(event) => setBrandNameInput(event.target.value)} placeholder="Nombre de la marca" /><input className="field-control" maxLength={40} value={brandHandleInput} onChange={(event) => setBrandHandleInput(event.target.value)} placeholder="Usuario de Instagram (opcional)" /><button className="primary-button" onClick={() => void addBrand()} disabled={brandBusy || brandNameInput.trim().length < 2}><Plus size={15} /> Agregar</button></div></div>
         <div className="managed-brand-list" aria-label="Marcas activas">{brands.map((item) => <button className={`managed-brand-chip ${editingBrandId === item.id ? "selected" : ""}`} key={item.id} onClick={() => editBrand(item)}><span className="account-dot" style={{ background: item.color }}>{item.initials}</span>{item.name}</button>)}</div>
         {managedBrand ? <>
+          {isManglar(managedBrand.name) && <div className="brand-add-box"><strong>Community manager Manglar</strong><p>Contenido inspiracional colombiano y retoque de fotos reales. El agente consulta publicaciones recientes de la cuenta conectada para tomar referencias de estilo y producto; también puede usar Drive y recursos cargados.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => setBrandEssence(MANGLAR_ESSENCE)}>Cargar guía Manglar</button><button type="button" className="secondary-button" disabled={brandBusy || !connectedAccounts[managedBrand.name]} onClick={() => void checkInstagramReferences()}>Comprobar referencias de Instagram</button>{instagramReferences.brandId === managedBrand.id && <><p role="status">{instagramReferences.message}</p><div style={{display:"flex",gap:8}}>{instagramReferences.images.map((src,index)=><img key={index} src={src} alt={`Referencia Instagram ${index+1}`} style={{width:"30%",objectFit:"contain"}} />)}</div>{instagramReferences.captions && <details><summary>Textos de referencia consultados</summary><p style={{whiteSpace:"pre-wrap"}}>{instagramReferences.captions}</p></details>}</>}</div>}
           {isDneyla(managedBrand.name) && <div className="brand-add-box"><strong>Agente creativo D’Neyla</strong><p className="field-hint">Mejora fotos reales de la web y de Drive con el estilo de la marca. Sin precios ni “pide hoy”. Usa una carpeta exclusiva con fotos de productos, logo y publicaciones aprobadas.</p><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => { setBrandEssence(DNEYLA_ESSENCE); setBrandWebsites(current => current.some(url => url.trim()) ? current : [DNEYLA_WEBSITE]); setToast("Guía D’Neyla cargada. Pulsa Guardar perfil para conservarla."); }}><Sparkles size={14} /> Cargar guía recomendada</button></div>}
           <div className="brand-agent-heading"><div className="account-dot" style={{ background: managedBrand.color }}>{managedBrand.initials}</div><div><strong>Agente de {managedBrand.name}</strong><span>Perfil independiente para esta marca</span></div><span className={`brand-status-pill ${managedBrand.active ? "" : "archived"}`}>{managedBrand.active ? "Activa" : "Archivada"}</span></div>
           <label className="field-label field-gap" htmlFor="brand-essence">Esencia y reglas de marca</label><textarea id="brand-essence" className="caption-control brand-essence-control" maxLength={4000} value={brandEssence} onChange={(event) => setBrandEssence(event.target.value)} placeholder="Describe personalidad, público, productos, beneficios confirmados, palabras que usa o evita y estilo visual…" /><div className="field-hint">El agente usa estas reglas para redactar el copy y crear los creativos.</div>
