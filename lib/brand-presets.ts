@@ -16,6 +16,6 @@ CONTENIDO: alterna antojo y textura, postres y pudines del catálogo, ocasiones 
 
 REGLAS: sin precios en imágenes ni textos. No usar “pide hoy” ni variaciones de presión inmediata. No trasladar mensajes o recursos de otras marcas. CTA suaves como “¿Con quién lo compartirías?”, “Descubre nuestros sabores” o “Escríbenos para conocer las opciones”. Evita repetir producto y enfoque del contenido reciente.
 
-FORMATOS: feed con producto protagonista y poco texto; historias verticales con título corto, mensaje legible y CTA sin botones ficticios. Mantén márgenes amplios. Prepara ciclos de 15 días cuando el piloto esté habilitado, respetando horarios y cuentas conectadas.`;
+FORMATOS: feed con producto protagonista y poco texto; historias verticales con título corto, mensaje legible y CTA sin botones ficticios. Mantén márgenes amplios. Prepara ciclos de 30 días cuando el piloto esté habilitado, respetando horarios y cuentas conectadas.`;
 
 export const DNEYLA_IMAGE_RULES = "MODO RETOQUE D’NEYLA: edita una fotografía real adjunta como base; no generes una torta nueva desde cero. Las fotos de web y Drive pertenecen al catálogo de esta marca y pueden consultarse juntas, pero conserva un solo producto protagonista sin fusionar sus características con otros. Mejora únicamente luz, fondo, encuadre, sombras y presentación. Usa las piezas anteriores de Drive para el estilo, no como prueba de stock, promociones o precios. No publiques precios ni la frase pide hoy. Si la referencia no permite identificar el sabor, usa un texto de marca sin nombrarlo.";

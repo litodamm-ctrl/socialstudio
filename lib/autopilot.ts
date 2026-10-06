@@ -1,5 +1,5 @@
 const DAY = 86_400_000;
-export const CYCLE_DAYS = 15;
+export const CYCLE_DAYS = 30;
 export function localDate(now: number) { return new Date(now - 5 * 3_600_000).toISOString().slice(0, 10); }
 export function addDays(date: string, days: number) { return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10); }
 export function cycleDates(now: number, previousEnd?: string): { start: string; end: string } | null {
@@ -43,3 +43,4 @@ export async function ensureAutopilotTables(db: D1Database) {
     id TEXT PRIMARY KEY, claim_id TEXT, lease_until INTEGER NOT NULL DEFAULT 0
   )`).run();
 }
+

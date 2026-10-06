@@ -1,6 +1,6 @@
 import { POST as generateCreative } from "@/lib/generate-creative";
 import { ensureBrandRegistry } from "@/lib/brands";
-import { cycleDates, cycleSlots, ensureAutopilotTables } from "@/lib/autopilot";
+import { CYCLE_DAYS, addDays, localDate, cycleDates, cycleSlots, ensureAutopilotTables } from "@/lib/autopilot";
 
 type Brand = { id: string; owner_id: string; name: string; brand_essence: string; posting_days: string; preferred_time: string; story_time: string; auto_stories: number };
 type Slot = { id: string; brand_id: string; owner_id: string; local_date: string; media_type: string; scheduled_at: string; objective: string; name: string; brand_essence: string };
@@ -20,15 +20,24 @@ export async function processBrandAgentSchedules(db: D1Database) {
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
       WHERE b.active = 1 AND b.auto_schedule = 1 AND length(trim(b.brand_essence)) >= 20`).all<Brand>();
     for (const brand of brands.results ?? []) {
-      const latest = await db.prepare("SELECT end_date FROM autopilot_cycles WHERE owner_id = ? AND brand_id = ? ORDER BY start_date DESC LIMIT 1")
-        .bind(brand.owner_id, brand.id).first<{end_date: string}>();
-      const dates = cycleDates(now, latest?.end_date);
+      const latest = await db.prepare("SELECT id, start_date, end_date FROM autopilot_cycles WHERE owner_id = ? AND brand_id = ? ORDER BY start_date DESC LIMIT 1")
+        .bind(brand.owner_id, brand.id).first<{id: string; start_date: string; end_date: string}>();
+      // Extend an active legacy cycle once, appending only its new dates.
+      // Existing posts, skipped slots and user edits remain untouched.
+      const extendedEnd = latest && addDays(latest.start_date, CYCLE_DAYS - 1);
+      const extend = Boolean(latest && extendedEnd && latest.end_date >= localDate(now) && latest.end_date < extendedEnd);
+      const dates = extend && latest && extendedEnd
+        ? { start: latest.start_date, end: extendedEnd }
+        : cycleDates(now, latest?.end_date);
       if (!dates) continue;
-      const cycleId = `${brand.id}:${dates.start}`;
-      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories));
+      const cycleId = extend && latest ? latest.id : `${brand.id}:${dates.start}`;
+      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories))
+        .filter(slot => !extend || !latest || slot.date > latest.end_date);
       await db.batch([
         db.prepare("INSERT OR IGNORE INTO autopilot_cycles (id, owner_id, brand_id, start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?)")
           .bind(cycleId, brand.owner_id, brand.id, dates.start, dates.end, now),
+        db.prepare("UPDATE autopilot_cycles SET end_date = ? WHERE id = ? AND owner_id = ? AND brand_id = ? AND end_date < ?")
+          .bind(dates.end, cycleId, brand.owner_id, brand.id, dates.end),
         ...slots.map(slot => db.prepare(`INSERT OR IGNORE INTO autopilot_slots
           (id, cycle_id, owner_id, brand_id, local_date, media_type, scheduled_at, objective, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
