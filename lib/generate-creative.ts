@@ -8,6 +8,7 @@ import { loadGoogleDriveMaterials } from "@/lib/google-drive";
 import { ensureDefaultBrands, isActiveBrand } from "@/lib/brands";
 import { rotateReferences, validPublicationDate } from "@/lib/creative-references";
 import sharp from "sharp";
+import { formatStory } from "@/lib/story-format";
 import { DNEYLA_ESSENCE, DNEYLA_IMAGE_RULES, DNEYLA_WEBSITE, isDneyla } from "@/lib/brand-presets";
 import { storedWebsiteUrls, loadWebsiteSource, fetchPublicResource, WebsiteSourceError } from "@/lib/website-sources";
 
@@ -193,14 +194,14 @@ export async function POST(request: Request) {
     }
     const rawBytes = Uint8Array.from(atob(generatedImage), (character) => character.charCodeAt(0));
     if (!rawBytes.byteLength || rawBytes.byteLength > MAX_IMAGE_BYTES) return Response.json({ error: "El creativo generado superó el límite de tamaño." }, { status: 502 });
-    const bytes = await sharp(rawBytes, { limitInputPixels: 25_000_000 }).rotate()
-      .resize(1080, mediaType === "Historia" ? 1920 : 1080, { fit: "contain", background: "#ffffff" })
+    const bytes = mediaType === "Historia" ? await formatStory(rawBytes) : await sharp(rawBytes, { limitInputPixels: 25_000_000 }).rotate()
+      .resize(1080, 1080, { fit: "contain", background: "#ffffff" })
       .flatten({ background: "#ffffff" }).jpeg({ quality: 88 }).toBuffer();
     if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) return Response.json({ error: "El creativo generado superó el límite de tamaño." }, { status: 502 });
     const id = crypto.randomUUID();
     await env.BUCKET.put(`media/${id}`, bytes, {
       httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=300" },
-      customMetadata: { ownerId, generatedBy: "social-studio-ai" },
+      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v2" : "feed" },
     });
     await referenceUsage.commit();
     return Response.json({
