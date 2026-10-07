@@ -6,14 +6,23 @@ export function rankReferences<T>(items: T[], key: (item:T)=>string, history:Ref
   return items.filter(item=>{const id=referenceKey(key(item));if(seen.has(id))return false;seen.add(id);return true;}).map(item=>({item,stat:history.get(referenceKey(key(item))) ?? {uses:0,last_used:0}, tie:random()}))
     .sort((a,b)=>Number(a.stat.last_used > now-7*86400000)-Number(b.stat.last_used > now-7*86400000) || a.stat.uses-b.stat.uses || a.stat.last_used-b.stat.last_used || a.tie-b.tie).map(row=>row.item);
 }
-export async function loadReferenceUsage(db:D1Database,owner:string,brand:string) {
+export async function loadReferenceUsage(db:D1Database,owner:string,brand:string, format = "legacy") {
   await db.prepare(`CREATE TABLE IF NOT EXISTS brand_reference_usage (owner_id TEXT NOT NULL, brand TEXT NOT NULL, source_key TEXT NOT NULL, uses INTEGER NOT NULL DEFAULT 0, last_used INTEGER NOT NULL, PRIMARY KEY(owner_id,brand,source_key))`).run();
   const rows=await db.prepare('SELECT source_key, uses, last_used FROM brand_reference_usage WHERE owner_id = ? AND brand = ?').bind(owner,brand).all<{source_key:string;uses:number;last_used:number}>();
   const history:ReferenceHistory = new Map((rows.results ?? []).map(row=>[row.source_key,row]));
   const used = new Set<string>();
+  const scoped = (source:string) => `${format}:${source}`;
   return {
-    rank<T>(items:T[],key:(item:T)=>string) {return rankReferences(items,key,history);},
-    mark(source:string) {used.add(referenceKey(source));},
+    rank<T>(items:T[],key:(item:T)=>string) {return rankReferences(items,item=>scoped(key(item)),history);},
+    mark(source:string) {used.add(referenceKey(scoped(source)));},
+    // Feed rotates by actual image content, not by URL or recent story use.
+    rankImages<T>(items:T[],key:(item:T)=>string) {
+      const seen = new Set<string>();
+      return items.filter(item=>{const id=key(item);if(seen.has(id))return false;seen.add(id);return true;})
+        .map(item=>({item,stat:history.get(referenceKey(scoped(`image:${key(item)}`))) ?? {uses:0,last_used:0},tie:Math.random()}))
+        .sort((a,b)=>a.stat.uses-b.stat.uses || a.stat.last_used-b.stat.last_used || a.tie-b.tie).map(x=>x.item);
+    },
+    markImage(key:string) {used.add(referenceKey(scoped(`image:${key}`)));},
     async commit() {
       if (!used.size) return;
       await db.batch([...used].map(key=>db.prepare(`INSERT INTO brand_reference_usage(owner_id,brand,source_key,uses,last_used) VALUES(?,?,?,1,?) ON CONFLICT(owner_id,brand,source_key) DO UPDATE SET uses=uses+1,last_used=excluded.last_used`).bind(owner,brand,key,Date.now())));

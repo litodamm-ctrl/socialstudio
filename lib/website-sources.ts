@@ -111,7 +111,7 @@ export function extractWebsitePage(html: string, url: string): WebsitePage {
   const images: string[] = [];
   const add = (candidate: string) => {
     candidate = decode(candidate).trim();
-    if (!candidate || images.length >= 20) return;
+    if (!candidate || images.length >= 40) return;
     if (/^data:/i.test(candidate)) {
       if (/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(candidate) && candidate.length <= 7 * 1024 * 1024 && !images.includes(candidate)) images.push(candidate);
       return;
@@ -129,7 +129,7 @@ export function extractWebsitePage(html: string, url: string): WebsitePage {
   for (const match of html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ").matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) {
     if (/^data:image\/(?:jpeg|png|webp);/i.test(match[1]) || /\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(match[1])) add(match[1]);
   }
-  return { url, title, text: decode(clean.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 10_000), images: images.slice(0, 20) };
+  return { url, title, text: decode(clean.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 10_000), images };
 }
 
 export function selectWebsiteIndex(pages: Array<{ url: string; title?: string }>, brief: string, seed: string): number {

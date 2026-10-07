@@ -1,4 +1,5 @@
 import { loadReferenceUsage } from "@/lib/reference-usage";
+import { imageIdentity } from "@/lib/image-identity";
 import { readWebsiteImage } from "@/lib/website-images";
 import { isManglar, MANGLAR_ESSENCE, MANGLAR_IMAGE_RULES } from "@/lib/manglar-preset";
 import { loadInstagramBrandMaterials } from "@/lib/instagram-brand-materials";
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     const websiteUrls = savedWebsiteUrls.length ? savedWebsiteUrls : dneyla ? [DNEYLA_WEBSITE] : [];
     const includeDrive = enhanceProducts || !websiteUrls.length;
     const sourceWarnings: string[] = [];
-    const referenceUsage = await loadReferenceUsage(env.DB, ownerId, brand);
+    const referenceUsage = await loadReferenceUsage(env.DB, ownerId, brand, mediaType === "Historia" ? "story" : "feed");
     const [websiteContext, driveContext, driveMaterials, assetRows, recentPosts] = await Promise.all([
       loadWebsiteSource(websiteUrls, brief, rotationSeed).catch(error => {
         if (!enhanceProducts) throw error;
@@ -86,15 +87,25 @@ export async function POST(request: Request) {
     }) : {content: [] as Array<Record<string,string>>, text: ""};
     const referenceContent: Array<Record<string, string>> = [];
     if (websiteContext) {
-      const candidates = referenceUsage.rank(websiteContext.images, url => `web:${websiteContext.url}:${url}`).slice(0, 12);
-      for (const imageUrl of candidates) {
-        if (referenceContent.filter(item => item.type === "input_image").length >= 1) break;
-        try {
-          const bytes = await readWebsiteImage(imageUrl);
-          referenceUsage.mark(`web:${websiteContext.url}:${imageUrl}`);
-          referenceContent.push({ type: "input_text", text: `Fotografía de la web de esta marca. Fuente: ${imageUrl.startsWith("data:") ? `${websiteContext.url} (fotografía incrustada)` : imageUrl}` });
-          referenceContent.push({ type: "input_image", image_url: `data:image/jpeg;base64,${bytes.toString("base64")}`, detail: "high" });
-        } catch { /* Skip invalid, inaccessible and unsafe image resources. */ }
+      const candidates = referenceUsage.rank(websiteContext.images, url => `web:${websiteContext.url}:${url}`);
+      const photos: Array<{imageUrl:string;bytes:Buffer;identity:string}> = [];
+      const deadline = Date.now() + 45_000;
+      for (let offset=0; offset<candidates.length && Date.now()<deadline; offset+=4) {
+        if (mediaType === "Historia" && photos.length >= 1) break;
+        const batch = await Promise.all(candidates.slice(offset,offset+4).map(async imageUrl=>{
+          try {
+            const bytes = await readWebsiteImage(imageUrl);
+            return {imageUrl,bytes,identity:await imageIdentity(bytes)};
+          } catch { return null; }
+        }));
+        for(const photo of batch) if(photo) photos.push(photo);
+      }
+      const chosen = referenceUsage.rankImages(photos,item=>item.identity)[0];
+      if (chosen) {
+        referenceUsage.mark(`web:${websiteContext.url}:${chosen.imageUrl}`);
+        referenceUsage.markImage(chosen.identity);
+        referenceContent.push({type:"input_text",text:`FOTO PRINCIPAL SELECCIONADA para ${mediaType}. Usa esta foto como protagonista, no la sustituyas por una foto de las referencias de estilo. Fuente: ${websiteContext.url}`});
+        referenceContent.push({type:"input_image",image_url:`data:image/jpeg;base64,${chosen.bytes.toString("base64")}`,detail:"high"});
       }
       if (!referenceContent.length && !enhanceProducts) return Response.json({ error: `No se pudieron procesar las fotografías de ${websiteContext.url}. Comprueba esta web para ver el diagnóstico.` }, { status: 422 });
     }
