@@ -212,7 +212,7 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     await env.BUCKET.put(`media/${id}`, bytes, {
       httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=300" },
-      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v2" : "feed" },
+      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v3" : "feed" },
     });
     await referenceUsage.commit();
     return Response.json({

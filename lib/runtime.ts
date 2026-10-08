@@ -160,7 +160,7 @@ class HttpR2Bucket {
       if (name.toLowerCase().startsWith("x-amz-meta-")) customMetadata[name.slice("x-amz-meta-".length)] = value;
     });
     for (const name of Object.keys(customMetadata)) {
-      const normalized = ({ ownerid: "ownerId", brandid: "brandId", generatedby: "generatedBy" } as Record<string, string>)[name.toLowerCase()];
+      const normalized = ({ ownerid: "ownerId", brandid: "brandId", generatedby: "generatedBy", storyformat: "storyFormat", originalmediaid: "originalMediaId" } as Record<string, string>)[name.toLowerCase()];
       if (normalized) { customMetadata[normalized] = customMetadata[name]; delete customMetadata[name]; }
     }
     const httpMetadata = { contentType: response.headers.get("content-type") ?? undefined };
@@ -227,3 +227,4 @@ export async function createR2PresignedUrl(method: "GET" | "PUT", key: string, h
   if (!(bucket instanceof HttpR2Bucket)) throw new Error("Cloudflare R2 credentials are not configured.");
   return bucket.presign(method, key, headers, expiresSeconds);
 }
+
