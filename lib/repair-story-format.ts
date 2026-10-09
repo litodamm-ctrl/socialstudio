@@ -23,7 +23,7 @@ export async function repairPendingStories(db: D1Database, bucket: R2Bucket) {
         const original = await bucket.get(`media/${mediaId}`);
         if (original?.customMetadata?.ownerId === post.owner_id && original.customMetadata.generatedBy === "social-studio-ai") {
           result = "already-correct";
-          if ((original.customMetadata.storyFormat ?? original.customMetadata.storyformat) !== "9x16-v3") {
+          if (!["9x16-v3", "9x16-v4"].includes(original.customMetadata.storyFormat ?? original.customMetadata.storyformat ?? "")) {
             // Use the first preserved source, never another repeatedly transcoded copy.
             const first = await db.prepare("SELECT original_url FROM story_format_repairs WHERE post_id=? AND result='repaired' ORDER BY checked_at ASC LIMIT 1")
               .bind(post.id).first<{original_url:string}>();
