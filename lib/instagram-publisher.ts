@@ -1,3 +1,4 @@
+import { assertStoryPublicationFormat } from "./story-publication-policy";
 import { decryptInstagramToken, encryptInstagramToken, graphUrl, instagramApiError } from "@/lib/meta";
 import { ensureFacebookTables } from "@/lib/facebook";
 import { ensureBrandRegistry } from "@/lib/brands";
@@ -130,6 +131,7 @@ async function processOne(db: D1Database, bucket: R2Bucket | undefined, post: Du
     if (!objectId) throw new Error("El archivo adjunto ya no está disponible.");
     const object = await bucket.head(`media/${objectId}`);
     if (!object || object.customMetadata?.ownerId !== post.owner_id) throw new Error("El archivo adjunto ya no está disponible.");
+    assertStoryPublicationFormat(post.media_type, object.customMetadata);
     const contentType = object.httpMetadata?.contentType;
     if (!["Imagen", "Historia", "Reel"].includes(post.media_type)) throw new Error("Formato de publicación no compatible.");
     if (["Imagen", "Historia"].includes(post.media_type) && contentType !== "image/jpeg") throw new Error("Para una imagen o historia automática, adjunta un archivo JPG.");
@@ -360,3 +362,4 @@ export async function processDueInstagramPublications(bindings: PublisherBinding
 export async function ensureInstagramPublishJobs(db: D1Database) {
   await ensureJobTable(db);
 }
+
