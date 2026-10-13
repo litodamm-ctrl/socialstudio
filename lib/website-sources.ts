@@ -111,7 +111,7 @@ export function extractWebsitePage(html: string, url: string): WebsitePage {
   const images: string[] = [];
   const add = (candidate: string) => {
     candidate = decode(candidate).trim();
-    if (!candidate || images.length >= 40) return;
+    if (!candidate || images.length >= 200) return;
     if (/^data:/i.test(candidate)) {
       if (/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(candidate) && candidate.length <= 7 * 1024 * 1024 && !images.includes(candidate)) images.push(candidate);
       return;
