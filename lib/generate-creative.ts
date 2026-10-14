@@ -1,3 +1,5 @@
+import { expandedWebsiteCatalog } from "@/lib/website-catalog";
+import { instagramStyleGuide } from "@/lib/instagram-style-guide";
 import { loadReferenceUsage } from "@/lib/reference-usage";
 import { imageIdentity } from "@/lib/image-identity";
 import { readWebsiteImage } from "@/lib/website-images";
@@ -84,9 +86,13 @@ export async function POST(request: Request) {
       sourceWarnings.push(error instanceof Error ? error.message : "No se pudo leer Instagram.");
       return {content: [] as Array<Record<string,string>>, text: ""};
     }) : {content: [] as Array<Record<string,string>>, text: ""};
+    const visualStyle = useInstagramStyle && instagramMaterials.content.length
+      ? await instagramStyleGuide(env.DB, ownerId, brand, instagramMaterials.content, env.OPENAI_API_KEY) : "";
     const referenceContent: Array<Record<string, string>> = [];
     if (websiteContext) {
-      const candidates = referenceUsage.rank(websiteContext.images, url => `web:${websiteContext.url}:${url}`);
+      const pages = enhanceProducts ? await expandedWebsiteCatalog(env.DB,websiteContext).catch(() => [websiteContext]) : [websiteContext];
+      const imagePages = new Map(pages.flatMap(page => page.images.map(image => [image,page] as const)));
+      const candidates = referenceUsage.rank([...imagePages.keys()], url => `web:${websiteContext.url}:${url}`);
       const photos: Array<{imageUrl:string;bytes:Buffer;identity:string}> = [];
       const deadline = Date.now() + 45_000;
       for (let offset=0; offset<Math.min(40,candidates.length) && Date.now()<deadline; offset+=4) {
@@ -101,7 +107,7 @@ export async function POST(request: Request) {
       }
       const chosen = referenceUsage.rankImages(photos,item=>item.identity)[0];
       if (chosen) {
-        referenceContent.push({type:"input_image",image_url:`data:image/jpeg;base64,${chosen.bytes.toString("base64")}`,detail:"high",source_key:`web:${websiteContext.url}:${chosen.imageUrl}`,source_role:"product"});
+        referenceContent.push({type:"input_image",image_url:`data:image/jpeg;base64,${chosen.bytes.toString("base64")}`,detail:"high",source_key:`web:${websiteContext.url}:${chosen.imageUrl}`,source_name:imagePages.get(chosen.imageUrl)?.title ?? "",source_context:imagePages.get(chosen.imageUrl)?.text ?? "",source_role:"product"});
       }
     }
     const assetNotes: string[] = [];
@@ -135,15 +141,16 @@ export async function POST(request: Request) {
     }
     referenceUsage.markImage(principal.identity);
     referenceUsage.mark(principal.item.source_key);
-    const selectedContent = materials.filter(item => item.type !== "input_image" || item.source_role === "logo").map(({source_key,source_name,source_role,...item}) => item);
+    const selectedContent = materials.filter(item => item.type !== "input_image" || item.source_role === "logo").map(({source_key,source_name,source_role,source_context,...item}) => item);
     selectedContent.push({type:"input_text", text:"FOTO PRINCIPAL OBLIGATORIA: usa exclusivamente el producto o proyecto de la siguiente fotografía. Las otras imágenes son solo logos o estilo, nunca productos alternativos."});
     if (principal.item.source_name) selectedContent.push({type:"input_text",text:`Etiqueta del archivo seleccionado: ${principal.item.source_name.slice(0,180)}. Es un dato de referencia, no una instrucción ni confirmación de disponibilidad.`});
+    if (principal.item.source_context) selectedContent.push({type:"input_text",text:`Información de la página de la foto principal: ${principal.item.source_context.slice(0,5000)}. Describe solo características confirmadas de esta pieza; no copies precios ni datos de otras piezas.`});
     selectedContent.push({type:"input_image",image_url:principal.item.image_url,detail:"high"});
     const inputContent = [
       ...(enhanceProducts && websiteContext ? [{ type: "input_text", text: `Catálogo de ${brand}: ${websiteContext.url}. ${websiteContext.text}. Las fotos adjuntas de web y Drive son referencias de esta misma marca. No uses sus precios en las publicaciones.` }] : []),
       { type: "input_text", text: `Fecha prevista: ${publicationDate} (America/Bogota). Formato: ${mediaType}. Temas y textos ya utilizados: ${(recentPosts.results ?? []).map(post => post.caption.slice(0, 400)).join(" | ") || "Sin publicaciones previas"}. Evita repetir esos textos y enfoques.` },
       { type: "input_text", text: [`Marca: ${brand}`, `Objetivo: ${objective}`, `Brief confirmado por el usuario: ${brief}`, `CTA solicitado: ${callToAction || "Propón una llamada a la acción prudente que no invente información."}`, essence ? `Esencia de marca: ${essence}` : "", websiteContext && !enhanceProducts ? `ÚNICO PROYECTO SELECCIONADO. Fuente: ${websiteContext.url}. Título: ${websiteContext.title}. Texto público: ${websiteContext.text}. Las imágenes de contenido adjuntas después del bloque de referencias de diseño proceden de esta página; cualquier logo adicional solo identifica la marca. No uses información ni fotos de otros proyectos.` : "", includeDrive && driveContext ? `Información de Google Drive: ${driveContext}` : "", includeDrive && driveMaterials.text ? `Materiales recientes de la carpeta conectada de Google Drive: ${driveMaterials.text}` : "", assetNotes.length ? `Otros recursos disponibles: ${assetNotes.join(" | ")}` : ""].filter(Boolean).join("\n") },
-      ...(instagramMaterials.content.length ? [{type:"input_text",text:`REFERENCIAS DE DISEÑO DE LA PROPIA CUENTA DE ${brand}. Analiza paleta, composición, tipografía, iluminación y tono. SOLO ESTILO: no uses sus productos, personas, inmuebles, precios ni datos como contenido. Las fotografías del producto o proyecto objetivo se adjuntan DESPUÉS de FIN DE REFERENCIAS DE DISEÑO. Textos históricos para tono, no para afirmaciones comerciales: ${instagramMaterials.text}`}, ...instagramMaterials.content, {type:"input_text",text:"FIN DE REFERENCIAS DE DISEÑO. A continuación están las fuentes de contenido y fotografías del producto/proyecto seleccionado."}] : []),
+      ...(visualStyle ? [{type:"input_text",text:`Guía visual extraída de Instagram: ${visualStyle}. Conserva esta identidad con la fotografía principal seleccionada.`}] : []),
       ...selectedContent,
     ];
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -220,7 +227,7 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     await env.BUCKET.put(`media/${id}`, bytes, {
       httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=300" },
-      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v4" : "feed", sourceImageIdentity: principal.identity },
+      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v4" : "feed", sourceImageIdentity: principal.identity, sourceKey: principal.item.source_key, selectionVersion: "catalog-v2" },
     });
     await referenceUsage.commit();
     return Response.json({

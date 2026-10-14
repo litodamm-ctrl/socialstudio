@@ -164,6 +164,7 @@ export default function Home() {
   });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [refreshProgress, setRefreshProgress] = useState<{brandId:string;message:string}|null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [instagramReferences, setInstagramReferences] = useState<{brandId:string;message:string;images:string[];captions:string}>({brandId:"",message:"",images:[],captions:""});
   const [postsOpen, setPostsOpen] = useState(false);
@@ -669,6 +670,28 @@ export default function Home() {
     finally { setBrandBusy(false); }
   }
 
+  async function refreshFeedCalendar(checkOnly = false) {
+    if (!managedBrand) return;
+    const brandId = managedBrand.id;
+    if (!checkOnly && !window.confirm(`Renovar las imágenes y los copys del feed pendiente de ${managedBrand.name} usando otras fotos del catálogo. Las fechas se conservan. Las piezas del agente quedarán temporalmente en borrador hasta completarse; no se publicarán las imágenes antiguas durante la reparación. Consume créditos de la API de OpenAI.`)) return;
+    setBrandBusy(true);
+    try {
+      if (!checkOnly) {
+        const response = await fetch(`/api/brands/${brandId}/autopilot/refresh`, {method:"POST"});
+        const data = await response.json() as {queued?:number;error?:string};
+        if (!response.ok) throw new Error(data.error || "No se pudo iniciar la reparación.");
+        setToast(`${data.queued ?? 0} piezas del feed en cola para renovar. Las fechas originales están guardadas.`);
+      }
+      const response = await fetch(`/api/brands/${brandId}/autopilot/refresh`, {cache:"no-store"});
+      const data = await response.json() as {counts?:Record<string,number>;error?:string};
+      if (!response.ok) throw new Error(data.error || "No se pudo consultar la reparación.");
+      const c = data.counts ?? {};
+      setRefreshProgress({brandId,message:`Feed renovado: ${c.completed ?? 0} · en cola: ${c.pending ?? 0} · generando: ${c.processing ?? 0} · con error: ${c.failed ?? 0} · omitidos: ${c.skipped ?? 0}${data.error ? `. ${data.error}` : ""}`});
+      await reloadPosts();
+    } catch(error) {setRefreshProgress({brandId,message:error instanceof Error?error.message:"No se pudo renovar el feed."});}
+    finally {setBrandBusy(false);}
+  }
+
   async function restoreBrandCalendar() {
     if (!managedBrand) return;
     const username = connectedAccounts[managedBrand.name];
@@ -966,7 +989,7 @@ export default function Home() {
             <p>La primera programación comienza mañana. Se activa una sola vez: no necesitas volver a abrir la app. Los cambios de días y horarios se aplican al próximo ciclo; puedes editar cada publicación del ciclo actual.</p><p>Al desactivar y guardar, se pausa la generación y la publicación de las piezas pendientes del agente. Tus publicaciones manuales conservan su programación.</p>
             {(agentConfigured === false || agentMissing.length > 0) && <div className="agent-error" role="status">Configuración pendiente: {agentMissing.length ? agentMissing.join(", ") : "revisa la conexión del agente y el almacenamiento"}. Completa la configuración para el funcionamiento autónomo.</div>}
             {!connectedAccounts[managedBrand.name] && <div className="field-hint">Falta conectar Instagram para publicar esta marca.</div>}
-            <div className="automation-progress" aria-live="polite"><strong>{managedBrand.autoSchedule ? "Piloto habilitado en la configuración" : "Piloto pausado"}</strong>{managedBrand.automationStatus ? <><span>Ciclo: {managedBrand.automationStatus.cycleStart.slice(0, 10)} → {managedBrand.automationStatus.cycleEnd.slice(0, 10)}</span><progress max={Math.max(1, managedBrand.automationStatus.total)} value={managedBrand.automationStatus.planned} /><span>{managedBrand.automationStatus.planned} de {managedBrand.automationStatus.total} espacios atendidos (incluye omitidos) · {managedBrand.automationStatus.failed} con error</span>{managedBrand.automationStatus.lastError && <div className="agent-error">{managedBrand.automationStatus.lastError}</div>}</> : <span>Aún no hay un ciclo preparado. Guarda el perfil para que el agente lo procese cuando las conexiones estén listas.</span>}<button type="button" className="secondary-button" onClick={() => void reloadPosts()}>Actualizar estado</button><button type="button" className="secondary-button" onClick={() => { setPostsBrandFilter(managedBrand.name); setBrandManagerOpen(false); setPostsOpen(true); }}>Ver contenido guardado ({posts.filter(post => post.brand === managedBrand.name).length})</button><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule || !connectedAccounts[managedBrand.name]} onClick={() => void restoreBrandCalendar()}>Recuperar calendario del agente</button><small>Reutiliza los borradores del agente en sus fechas futuras originales y reanuda pendientes cancelados al cambiar de cuenta. Activa y guarda el piloto primero.</small>{Boolean(managedBrand.automationStatus?.failed) && <><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule} onClick={() => void retryBrandPending()}>Reintentar pendientes</button><small>Comprueba las webs antes de reintentar. Recupera solo errores con fechas futuras; no recrea piezas completadas. La generación puede consumir créditos de OpenAI.</small></>}</div>
+            <div className="automation-progress" aria-live="polite"><strong>{managedBrand.autoSchedule ? "Piloto habilitado en la configuración" : "Piloto pausado"}</strong>{managedBrand.automationStatus ? <><span>Ciclo: {managedBrand.automationStatus.cycleStart.slice(0, 10)} → {managedBrand.automationStatus.cycleEnd.slice(0, 10)}</span><progress max={Math.max(1, managedBrand.automationStatus.total)} value={managedBrand.automationStatus.planned} /><span>{managedBrand.automationStatus.planned} de {managedBrand.automationStatus.total} espacios atendidos (incluye omitidos) · {managedBrand.automationStatus.failed} con error</span>{managedBrand.automationStatus.lastError && <div className="agent-error">{managedBrand.automationStatus.lastError}</div>}</> : <span>Aún no hay un ciclo preparado. Guarda el perfil para que el agente lo procese cuando las conexiones estén listas.</span>}<button type="button" className="secondary-button" onClick={() => void reloadPosts()}>Actualizar estado</button><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => void refreshFeedCalendar()}>Renovar feed con otras imágenes</button><button type="button" className="secondary-button" disabled={brandBusy} onClick={() => void refreshFeedCalendar(true)}>Ver progreso de renovación</button><small>Reemplaza imágenes y copys futuros del agente, conservando las fechas. Procesa una pieza a la vez y guarda los originales. Las piezas en reparación quedan en borrador para evitar publicar fotos repetidas.</small>{refreshProgress?.brandId === managedBrand.id && <span role="status">{refreshProgress.message}</span>}<button type="button" className="secondary-button" onClick={() => { setPostsBrandFilter(managedBrand.name); setBrandManagerOpen(false); setPostsOpen(true); }}>Ver contenido guardado ({posts.filter(post => post.brand === managedBrand.name).length})</button><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule || !connectedAccounts[managedBrand.name]} onClick={() => void restoreBrandCalendar()}>Recuperar calendario del agente</button><small>Reutiliza los borradores del agente en sus fechas futuras originales y reanuda pendientes cancelados al cambiar de cuenta. Activa y guarda el piloto primero.</small>{Boolean(managedBrand.automationStatus?.failed) && <><button type="button" className="secondary-button" disabled={brandBusy || !managedBrand.autoSchedule} onClick={() => void retryBrandPending()}>Reintentar pendientes</button><small>Comprueba las webs antes de reintentar. Recupera solo errores con fechas futuras; no recrea piezas completadas. La generación puede consumir créditos de OpenAI.</small></>}</div>
           </div>
           <div className="brand-manager-actions"><button className="secondary-button" onClick={() => void toggleBrandActive(managedBrand)} disabled={brandBusy}>{managedBrand.active ? "Quitar marca" : "Restaurar marca"}</button><button className="primary-button" onClick={() => void saveBrandProfile()} disabled={brandBusy}>{brandBusy ? "Guardando…" : "Guardar perfil"}</button></div>
         </> : <div className="empty-state"><span>Agrega una marca para configurar su agente.</span></div>}

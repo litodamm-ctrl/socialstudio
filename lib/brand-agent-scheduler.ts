@@ -1,3 +1,4 @@
+import { processCalendarRefresh } from "@/lib/calendar-refresh";
 import { POST as generateCreative } from "@/lib/generate-creative";
 import { ensureBrandRegistry } from "@/lib/brands";
 import { CYCLE_DAYS, addDays, localDate, cycleDates, cycleSlots, ensureAutopilotTables } from "@/lib/autopilot";
@@ -16,6 +17,7 @@ export async function processBrandAgentSchedules(db: D1Database) {
     .bind(claim, now + 12 * 60_000, now).first();
   if (!lock) return;
   try {
+    if (await processCalendarRefresh(db, generateCreative, claim)) return;
     const brands = await db.prepare(`SELECT b.* FROM brand_registry b
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
       WHERE b.active = 1 AND b.auto_schedule = 1 AND length(trim(b.brand_essence)) >= 20`).all<Brand>();
