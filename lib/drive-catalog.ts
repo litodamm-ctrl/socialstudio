@@ -32,5 +32,7 @@ export function belongsToProject(file: CatalogFile, website?: string) {
   const host = new URL(website).hostname.replace(/^www\./, "").split(".")[0];
   const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
   // Exact folder/domain label only: an unrelated filename is not project evidence.
-  return file.folders.some(folder => normalize(folder) === normalize(host));
+  const aliases: Record<string,string[]> = {grandbaybaru:["grandbay"],santillanadelmar1:["santillanadelmar"]};
+  const labels = [normalize(host), ...(aliases[normalize(host)] ?? [])];
+  return file.folders.some(folder => labels.includes(normalize(folder)));
 }
