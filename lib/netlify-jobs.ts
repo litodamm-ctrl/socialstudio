@@ -9,7 +9,7 @@ export async function ensureCreativeJobs() {
   return env.DB;
 }
 
-export async function launchBackground(name: "creative-background" | "publish-background" | "agent-background", body: unknown = {}) {
+export async function launchBackground(name: "creative-background" | "publish-background" | "agent-background" | "seo-background", body: unknown = {}) {
   const origin = process.env.SITE_ORIGIN;
   const secret = process.env.CRON_SECRET;
   if (!origin || !secret) throw new Error("Configura SITE_ORIGIN y CRON_SECRET en Netlify.");

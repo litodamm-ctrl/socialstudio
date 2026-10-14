@@ -1,5 +1,6 @@
 "use client";
 
+import SeoStudio from "@/components/seo-studio";
 import { isManglar, MANGLAR_ESSENCE } from "@/lib/manglar-preset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -114,6 +115,7 @@ const navItems = [
   { label: "Calendario", icon: CalendarDays, active: true },
   { label: "Publicaciones", icon: Layers3 },
   { label: "Biblioteca", icon: LayoutGrid },
+  { label: "SEO y Google", icon: Globe },
 ];
 
 function brandFor(name: string, availableBrands: Array<{ name: string; color: string; initials: string; handle: string }>) {
@@ -134,6 +136,8 @@ function statusLabel(status: Post["status"]) {
 }
 
 export default function Home() {
+  const [section, setSection] = useState("calendar");
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("section") === "seo") setSection("seo"); }, []);
   const [brands, setBrands] = useState<Brand[]>(defaultBrands.map((item, index) => ({ id: `seed-${index}`, ...item, active: true, essence: "", websiteUrl: "", websiteUrls: [], driveFolderUrl: "", driveConnected: false, instagramStyle: true, autoSchedule: false, autoCrosspost: false, postingDays: [0, 1, 2, 3, 4, 5, 6], preferredTime: "18:00", storyTime: "09:00", autoStories: true, automationStatus: null })));
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [week, setWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -837,7 +841,7 @@ export default function Home() {
         <div className="side-label">GESTIÓN</div>
         <nav className="primary-nav" aria-label="Navegación principal">
           {navItems.map(({ label, icon: Icon, active }) => (
-            <button key={label} className={`nav-item ${active ? "nav-active" : ""}`} onClick={() => { if (label === "Publicaciones") { setPostsOpen(true); setMobileMenu(false); } else if (label !== "Calendario") setToast("Esta sección estará disponible en la siguiente etapa."); }}>
+            <button key={label} className={`nav-item ${(label === "SEO y Google" ? section === "seo" : active && section === "calendar") ? "nav-active" : ""}`} onClick={() => { if (label === "SEO y Google" || label === "Calendario") { const next = label === "SEO y Google" ? "seo" : "calendar"; setSection(next); setMobileMenu(false); const url = new URL(window.location.href); if (next === "seo") url.searchParams.set("section", "seo"); else url.searchParams.delete("section"); window.history.replaceState(null, "", url); } else if (label === "Publicaciones") { setPostsOpen(true); setMobileMenu(false); } else if (label !== "Calendario") setToast("Esta sección estará disponible en la siguiente etapa."); }}>
               <Icon size={18} strokeWidth={1.9} /><span>{label}</span>{label === "Publicaciones" && <span className="nav-count">{posts.length}</span>}
             </button>
           ))}
@@ -872,7 +876,7 @@ export default function Home() {
       <section className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu-button" aria-label="Abrir menú" onClick={() => setMobileMenu(true)}><Menu size={21} /></button>
-          <div className="breadcrumb"><span>Gestión</span><ChevronRight size={14} /><strong>Calendario</strong></div>
+          <div className="breadcrumb"><span>Gestión</span><ChevronRight size={14} /><strong>{section === "seo" ? "SEO y Google" : "Calendario"}</strong></div>
           <div className="topbar-actions">
             <span className="timezone-label"><Clock3 size={15} /> Bogotá · GMT−5</span>
             <button className="topbar-avatar" aria-label="Perfil">DM</button>
@@ -880,6 +884,7 @@ export default function Home() {
         </header>
 
         <div className="content-wrap">
+          {section === "seo" ? <SeoStudio manageBrands={() => void openBrandManager()} /> : <>
           <div className="page-heading">
             <div><div className="eyebrow"><span className="eyebrow-line" /> PLANIFICACIÓN DE CONTENIDO</div><h1>Calendario</h1><p>Organiza lo que vas a compartir en Instagram.</p></div>
             <button className="primary-button" onClick={openComposer}><CirclePlus size={18} /> Crear publicación</button>
@@ -940,6 +945,7 @@ export default function Home() {
           </section>
 
           <footer className="bottom-note"><MessageSquareText size={15} /><span>{connectedBrands.length ? "La publicación programada admite feed, Reels e historias de imagen, con conexiones y permisos vigentes." : "Lo que guardes aquí queda como planificación. Conecta Instagram para activar la publicación automática."}</span></footer>
+          </>}
         </div>
       </section>
 
