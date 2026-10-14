@@ -1,5 +1,6 @@
 import { encryptInstagramToken, decryptInstagramToken } from "@/lib/meta";
 import type { SeoSettings } from "@/lib/seo";
+import { seoGoogleError } from "@/lib/seo-google-errors";
 
 export function googleConfigured() {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY && process.env.SITE_ORIGIN);
@@ -26,7 +27,10 @@ async function accessToken(db: D1Database, owner: string) {
 async function google<T>(token: string, url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, { method: body ? "POST" : "GET", signal: AbortSignal.timeout(20_000), cache: "no-store",
     headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  if (!response.ok) throw new Error(`Google respondió HTTP ${response.status}. Verifica permisos, API habilitada y acceso aprobado a Google Business Profile.`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(seoGoogleError(response.status, new URL(url).hostname, payload as Parameters<typeof seoGoogleError>[2]));
+  }
   return response.json() as Promise<T>;
 }
 export async function googleResources(db: D1Database, owner: string) {
