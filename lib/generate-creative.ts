@@ -1,6 +1,6 @@
 import { expandedWebsiteCatalog } from "@/lib/website-catalog";
 import { instagramStyleGuide } from "@/lib/instagram-style-guide";
-import { loadReferenceUsage } from "@/lib/reference-usage";
+import { loadReferenceUsage, referenceKey } from "@/lib/reference-usage";
 import { imageIdentity } from "@/lib/image-identity";
 import { readWebsiteImage } from "@/lib/website-images";
 import { isManglar, MANGLAR_ESSENCE, MANGLAR_IMAGE_RULES } from "@/lib/manglar-preset";
@@ -227,7 +227,7 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     await env.BUCKET.put(`media/${id}`, bytes, {
       httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=300" },
-      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v4" : "feed", sourceImageIdentity: principal.identity, sourceKey: principal.item.source_key, selectionVersion: "catalog-v2" },
+      customMetadata: { ownerId, generatedBy: "social-studio-ai", storyFormat: mediaType === "Historia" ? "9x16-v4" : "feed", sourceImageIdentity: principal.identity, sourceKeyHash: referenceKey(principal.item.source_key), selectionVersion: "catalog-v2" },
     });
     await referenceUsage.commit();
     return Response.json({
