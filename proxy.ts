@@ -6,6 +6,10 @@ export async function proxy(request: NextRequest) {
   if (pathname === "/login" || pathname === "/api/auth/login" || pathname.startsWith("/.netlify/functions/")) return NextResponse.next();
   if (pathname.startsWith("/api/media/") && request.method === "GET" && request.nextUrl.searchParams.has("signature")) return NextResponse.next();
 
+  // Only unguessable, consented photo grants and the exact TikTok ownership file are public.
+  if (["GET", "HEAD"].includes(request.method) && /^\/api\/tiktok\/media\/[A-Za-z0-9_-]{64}$/.test(pathname)) return NextResponse.next();
+  if (request.method === "GET" && pathname === `/${process.env.TIKTOK_VERIFICATION_FILE}` && /^\/tiktok[A-Za-z0-9_-]+\.txt$/.test(pathname)) return NextResponse.next();
+
   const cronSecret = process.env.CRON_SECRET;
   const authorization = request.headers.get("authorization") ?? "";
   if (pathname === "/api/cron/publish" && cronSecret && authorization === `Bearer ${cronSecret}`) return NextResponse.next();
@@ -22,3 +26,4 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
+

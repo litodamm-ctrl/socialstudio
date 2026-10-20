@@ -1,5 +1,6 @@
 "use client";
 
+import TikTokStudio from "@/components/tiktok-studio";
 import SeoStudio from "@/components/seo-studio";
 import { isManglar, MANGLAR_ESSENCE } from "@/lib/manglar-preset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -172,6 +173,10 @@ export default function Home() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [instagramReferences, setInstagramReferences] = useState<{brandId:string;message:string;images:string[];captions:string}>({brandId:"",message:"",images:[],captions:""});
   const [postsOpen, setPostsOpen] = useState(false);
+  const [tiktokOpen,setTikTokOpen] = useState(false);
+  const [tiktokBrandId,setTikTokBrandId] = useState("");
+  const [tiktokPostId,setTikTokPostId] = useState("");
+  useEffect(() => { const task=window.setTimeout(() => {if(new URLSearchParams(window.location.search).has("tiktok"))setTikTokOpen(true);},0);return () => window.clearTimeout(task);},[]);
   const [postsBrandFilter, setPostsBrandFilter] = useState("");
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentObjective, setAgentObjective] = useState("Ventas");
@@ -897,6 +902,7 @@ export default function Home() {
               <ChevronRight size={18} />
             </button>
             <button className="manage-brands-shortcut" onClick={() => void openBrandManager()}><Settings2 size={16} /> Gestionar marcas y agentes</button>
+            <button type="button" className="secondary-button" onClick={() => {setTikTokBrandId("");setTikTokPostId("");setTikTokOpen(true);}}>TikTok · Feed</button>
           </section>
 
           <section className="connection-banner">
@@ -949,6 +955,8 @@ export default function Home() {
         </div>
       </section>
 
+      {tiktokOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar TikTok" onClick={() => setTikTokOpen(false)} /><aside className="composer-drawer brand-manager-drawer" aria-label="TikTok · Publicaciones de feed"><div className="drawer-header"><div><span className="drawer-kicker">NUEVO CANAL</span><h2>TikTok · Feed</h2></div><button className="icon-button" aria-label="Cerrar panel TikTok" onClick={() => setTikTokOpen(false)}><X size={19}/></button></div><TikTokStudio brands={brands} posts={posts} initialBrandId={tiktokBrandId} initialPostId={tiktokPostId}/></aside></div>}
+
       {postsOpen && <div className="drawer-layer"><button className="drawer-backdrop" aria-label="Cerrar publicaciones" onClick={() => setPostsOpen(false)} /><aside className="composer-drawer brand-manager-drawer" aria-label="Todas las publicaciones">
         <div className="drawer-header"><div><span className="drawer-kicker">CONTENIDO GUARDADO</span><h2>Publicaciones y borradores</h2></div><button className="icon-button" aria-label="Cerrar lista" onClick={() => setPostsOpen(false)}><X size={19} /></button></div>
         <label className="field-label" htmlFor="posts-brand-filter">Filtrar por marca</label><select id="posts-brand-filter" className="field-control" value={postsBrandFilter} onChange={event => setPostsBrandFilter(event.target.value)}><option value="">Todas las marcas</option>{brands.map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
@@ -956,6 +964,7 @@ export default function Home() {
         {posts.filter(post => !postsBrandFilter || post.brand === postsBrandFilter).map(post => <article className="brand-add-box" key={post.id}>
           <strong>{post.brand} · {post.mediaType} · {statusLabel(post.status)}</strong>
           {post.mediaUrl && post.mediaType !== "Reel" && <img src={post.mediaUrl} alt={`Creativo de ${post.brand}`} loading="lazy" style={{ width: "100%", maxHeight: 260, objectFit: "contain", marginTop: 12 }} />}
+          {post.mediaType === "Imagen" && post.mediaUrl && <button type="button" className="secondary-button" onClick={() => {setTikTokBrandId(brands.find(b=>b.name===post.brand)?.id||"");setTikTokPostId(post.id);setPostsOpen(false);setTikTokOpen(true);}}>Preparar para TikTok</button>}
           <p style={{ whiteSpace: "pre-wrap" }}>{post.caption}</p><p>{post.scheduledAt ? format(new Date(post.scheduledAt), "d MMM · h:mm a", { locale: es }) : "Sin fecha"}</p>
           {post.status !== "published" && post.status !== "publishing" && <button className="secondary-button" onClick={() => { setPostsOpen(false); editPost(post); }}>Editar publicación</button>}
         </article>)}
@@ -984,6 +993,7 @@ export default function Home() {
           <div className="field-hint">Agrega hasta 10 páginas públicas con información e imágenes de tus proyectos. El agente consultará una fuente por pieza, sin mezclar precios, beneficios ni imágenes de proyectos distintos. Usa enlaces directos al proyecto y guarda los cambios.</div>
           <label className="field-label field-gap" htmlFor="brand-drive"><HardDrive size={14} /> Carpeta de Google Drive</label><input id="brand-drive" className="field-control" type="url" value={brandDrive} onChange={(event) => setBrandDrive(event.target.value)} placeholder="https://drive.google.com/drive/folders/..." /><div className="field-hint">Pega el enlace de la carpeta y pulsa Conectar Google Drive. Guardaremos la carpeta antes de abrir Google.</div><div className="drive-connect-row">{managedBrand.driveConnected ? <span className="connected-label">Drive conectado</span> : <button className="connect-mini" type="button" disabled={brandBusy} onClick={() => void connectBrandDrive(managedBrand.id)}><Link2 size={13} /> {brandBusy ? "Conectando…" : "Conectar Google Drive"}</button>}<span>La conexión solo da acceso de lectura.</span></div>
           <div className="facebook-brand-box"><div><strong>Facebook</strong><small>{connectedFacebookPages[managedBrand.name] ? `Página vinculada: ${connectedFacebookPages[managedBrand.name]}` : "Vincula la Página asociada a Instagram"}</small></div>{!connectedFacebookPages[managedBrand.name] && <button className="connect-mini" disabled={!connectedAccounts[managedBrand.name]} onClick={() => connectFacebookAccount(managedBrand.name)}><Link2 size={13} /> Vincular</button>}<label className="autopilot-toggle facebook-crosspost-toggle"><input type="checkbox" checked={brandAutoCrosspost} disabled={!connectedFacebookPages[managedBrand.name]} onChange={(event) => setBrandAutoCrosspost(event.target.checked)} /><span><strong>Replicar en Facebook al publicar en Instagram</strong><small>Requiere Facebook Login y una Página vinculada a esta cuenta de Instagram.</small></span></label></div>
+          <div className="facebook-brand-box"><strong>TikTok · Feed</strong><small>Conecta la cuenta de esta marca y prepara fotos para TikTok.</small><button type="button" className="secondary-button" onClick={() => {setTikTokBrandId(managedBrand.id);setTikTokPostId("");setBrandManagerOpen(false);setTikTokOpen(true);}}>Conectar TikTok y programar fotos</button></div>
           <div className="field-label field-gap">Recursos de marca <span className="field-hint">Logos, brochures, imágenes de referencia y documentos</span></div>
           {brandWebsites.some(url => url.trim()) && <><label className="field-label" htmlFor="asset-source">Proyecto de estos archivos</label><select id="asset-source" className="field-control" value={assetSourceUrl} disabled={brandBusy} onChange={event => setAssetSourceUrl(event.target.value)}><option value="">Recursos generales de la marca</option>{brandWebsites.filter(url => url.trim()).map(url=><option key={url} value={url}>{url}</option>)}</select><p className="field-hint">Para brochures y fotos inmobiliarias, selecciona la web del proyecto correspondiente. Así el agente no mezcla materiales entre proyectos. Los logos pueden cargarse como recursos generales.</p></>}
           <input ref={brandAssetInput} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown,.pdf,.jpg,.jpeg,.png,.webp,.txt,.md" hidden onChange={(event) => void uploadBrandAssets(Array.from(event.target.files ?? []))} />
@@ -1034,3 +1044,4 @@ export default function Home() {
     </main>
   );
 }
+
