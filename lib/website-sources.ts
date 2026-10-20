@@ -48,7 +48,7 @@ export function storedWebsiteUrls(json?: string | null, legacy?: string | null):
   try { return normalizeWebsiteUrls(legacy ? [legacy] : []); } catch { return []; }
 }
 
-export type PublicResource = { bytes: Buffer; url: string; contentType: string };
+export type PublicResource = { bytes: Buffer; url: string; contentType: string; headers?: Readonly<Record<string, string | string[] | undefined>> };
 export function resolvePublicRedirect(location: string, origin: string): URL {
   return publicUrl(new URL(location, origin).href);
 }
@@ -83,7 +83,7 @@ export async function fetchPublicResource(value: string, maxBytes = 512_000): Pr
           chunks.push(chunk);
         });
         res.on("error", reject);
-        res.on("end", () => resolve({ bytes: Buffer.concat(chunks), url: url.href, contentType: String(res.headers["content-type"] ?? "").split(";")[0].toLowerCase() }));
+        res.on("end", () => resolve({ bytes: Buffer.concat(chunks), url: url.href, contentType: String(res.headers["content-type"] ?? "").split(";")[0].toLowerCase(), headers: { "x-robots-tag": res.headers["x-robots-tag"] } }));
       });
       const timer = setTimeout(() => req.destroy(new Error("Web timeout")), Math.max(1, deadline - Date.now()));
       req.on("close", () => clearTimeout(timer));

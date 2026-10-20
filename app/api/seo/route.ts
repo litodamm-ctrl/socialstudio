@@ -1,7 +1,7 @@
 import { env } from "@/lib/runtime";
 import { ensureDefaultBrands } from "@/lib/brands";
-import { brandOwned, ensureSeo, queueSeo, seoSettings } from "@/lib/seo";
-import { googleConfigured, googleResources } from "@/lib/seo-google";
+import { brandOwned, ensureSeo, expireSeoRuns, queueSeo, seoSettings } from "@/lib/seo";
+import { googleCapabilities, googleConfigured, googleResources } from "@/lib/seo-google";
 import { storedWebsiteUrls } from "@/lib/website-sources";
 import { launchBackground } from "@/lib/netlify-jobs";
 
@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   if (!env.DB) return Response.json({ error: "Base de datos no disponible." }, { status: 503 });
   try {
     await ensureDefaultBrands(env.DB, owner); await ensureSeo(env.DB);
+    await expireSeoRuns(env.DB);
     const brands = await env.DB.prepare("SELECT id, name, color, initials, website_url, website_urls FROM brand_registry WHERE owner_id = ? AND active = 1 ORDER BY created_at").bind(owner).all();
     const connected = Boolean(await env.DB.prepare("SELECT owner_id FROM seo_google WHERE owner_id = ?").bind(owner).first());
     const id = new URL(request.url).searchParams.get("brandId");
@@ -21,7 +22,8 @@ export async function GET(request: Request) {
       const rows = await env.DB.prepare("SELECT id, status, started_at, finished_at, report, error FROM seo_runs WHERE owner_id = ? AND brand_id = ? ORDER BY started_at DESC LIMIT 10").bind(owner, id).all<{ id: string; status: string; started_at: number; finished_at: number | null; report: string | null; error: string | null }>();
       runs = (rows.results ?? []).map(r => ({ ...r, report: r.report ? JSON.parse(r.report) : null }));
     }
-    return Response.json({ brands: brands.results ?? [], settings, runs, google: { connected, configured: googleConfigured() }, agent: Boolean(env.OPENAI_API_KEY), scheduler: Boolean(env.SITE_ORIGIN && process.env.CRON_SECRET) }, { headers: { "Cache-Control": "no-store" } });
+    const capabilities = connected ? await googleCapabilities(env.DB, owner) : null;
+    return Response.json({ brands: brands.results ?? [], settings, runs, google: { connected, configured: googleConfigured(), capabilities }, agent: Boolean(env.OPENAI_API_KEY), scheduler: Boolean(env.SITE_ORIGIN && process.env.CRON_SECRET) }, { headers: { "Cache-Control": "no-store" } });
   } catch { return Response.json({ error: "No se pudo cargar SEO. Revisa la conexión con la base de datos." }, { status: 503 }); }
 }
 export async function POST(request: Request) {
@@ -40,9 +42,9 @@ export async function POST(request: Request) {
       const run = await queueSeo(env.DB, brand);
       try { await launchBackground("seo-background", { runId: run.id }); }
       catch {
-        await env.DB.prepare("UPDATE seo_runs SET status = 'failed', error = 'No se pudo iniciar el proceso en Netlify.', finished_at = ? WHERE id = ? AND status = 'queued'").bind(Date.now(), run.id).run();
-        await env.DB.prepare("UPDATE seo_settings SET lease_until = 0 WHERE brand_id = ? AND owner_id = ?").bind(brand.id, owner).run();
-        return Response.json({ error: "No se pudo iniciar el proceso. Comprueba que seo-background esté desplegada en Netlify." }, { status: 503 });
+        // A network failure can occur after Netlify accepts the job. Preserve
+        // the claim; the scheduled worker recovers genuinely queued work.
+        return Response.json({ queued: true, runId: run.id, recovery: true }, { status: 202 });
       }
       return Response.json({ queued: true, runId: run.id }, { status: 202 });
     }
@@ -50,10 +52,11 @@ export async function POST(request: Request) {
     if (typeof input.enabled !== "boolean" || !["daily", "weekly"].includes(String(input.cadence)) || typeof input.keywords !== "string" || input.keywords.length > 2000 || typeof input.location !== "string" || input.location.length > 200 || typeof input.searchProperty !== "string" || input.searchProperty.length > 2048 || typeof input.googleLocation !== "string" || input.googleLocation.length > 300) return Response.json({ error: "Revisa los campos del agente." }, { status: 400 });
     if (input.enabled && !storedWebsiteUrls(brand.website_urls, brand.website_url).length) return Response.json({ error: "Agrega al menos una web de esta marca antes de activar el agente." }, { status: 409 });
     if (input.enabled && (!env.SITE_ORIGIN || !process.env.CRON_SECRET)) return Response.json({ error: "Configura las tareas programadas en Netlify antes de activar el agente." }, { status: 409 });
-    if ((input.searchProperty && input.searchProperty !== current.search_property) || (input.googleLocation && input.googleLocation !== current.google_location)) {
-      const resources = await googleResources(env.DB, owner);
-      if (input.searchProperty && !resources.properties.some(p => p.siteUrl === input.searchProperty)) return Response.json({ error: "Esta propiedad no está autorizada en tu cuenta de Google." }, { status: 400 });
-      if (input.googleLocation && !resources.locations.some(l => l.name === input.googleLocation)) return Response.json({ error: "Esta ubicación no está autorizada en tu cuenta de Google." }, { status: 400 });
+    if (input.searchProperty || (input.googleLocation && input.googleLocation !== current.google_location)) {
+      const resources = await googleResources(env.DB, owner, { search: Boolean(input.searchProperty), business: Boolean(input.googleLocation && input.googleLocation !== current.google_location) });
+      if (input.searchProperty && !resources.properties.some(p => p.siteUrl === input.searchProperty)) return Response.json({ error: "Esta propiedad no está autorizada en tu cuenta de Google. Comprueba su verificación y permisos en Search Console." }, { status: 400 });
+      if (input.searchProperty && resources.properties.some(p => p.siteUrl === input.searchProperty && p.permissionLevel === "siteUnverifiedUser")) return Response.json({ error: "Esta propiedad aún no está verificada para tu cuenta. Completa la verificación en Search Console antes de vincularla." }, { status: 400 });
+      if (input.googleLocation && input.googleLocation !== current.google_location && !resources.locations.some(l => l.name === input.googleLocation)) return Response.json({ error: "Esta ubicación no está autorizada en tu cuenta de Google." }, { status: 400 });
     }
     await env.DB.prepare("UPDATE seo_settings SET enabled = ?, cadence = ?, keywords = ?, location = ?, search_property = ?, google_location = ? WHERE brand_id = ? AND owner_id = ?")
       .bind(input.enabled ? 1 : 0, input.cadence, input.keywords.trim(), input.location.trim(), input.searchProperty, input.googleLocation, brand.id, owner).run();

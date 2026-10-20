@@ -1,0 +1,80 @@
+.panel{display:grid;gap:18px;min-width:0;border:1px solid #e0e8e1;border-radius:14px;background:#fff;padding:22px;color:#293b31}
+.heading,.headingTitle,.proposalHeading{display:flex;align-items:center;gap:10px}
+.heading,.proposalHeading{justify-content:space-between;align-items:flex-start;gap:16px}
+.headingTitle{color:#3b664c}
+.headingTitle svg{flex:none}
+.panel h2{margin:0;font-size:16px;letter-spacing:-.3px}
+.heading p{margin:7px 0 0;color:#65766b;font-size:13px;line-height:1.6}
+.heading>button{flex:none}
+.panel button{font:inherit;font-size:12px}
+.panel button:disabled{cursor:not-allowed;opacity:.55;transform:none}
+.panel :is(button,a,summary,input,textarea):focus-visible{outline:2px solid #407e56;outline-offset:3px}
+.panel a{color:#286d4e;overflow-wrap:anywhere;font-size:12px}
+.panel p{line-height:1.6;font-size:12px}
+.panel .muted{color:#65766b;font-size:11px;line-height:1.6}
+.panel code{font-size:11px;overflow-wrap:anywhere}
+.destinations,.history{min-width:0;border:1px solid #e0e8e1;border-radius:10px;background:#fafcf9}
+.destinations>summary,.history>summary{padding:15px;cursor:pointer;color:#3b5d47;font-size:13px;font-weight:650}
+.summaryHint{margin-left:8px;color:#65766b;font-size:11px;font-weight:400}
+.destinationBody{border-top:1px solid #e4ebe6;padding:0 16px 16px}
+.destinationBody>p{color:#65766b}
+.connection{display:flex;align-items:flex-start;gap:8px;border-radius:8px;background:#edf5ef;padding:12px;color:#39684a;font-size:12px;line-height:1.6}
+.connection svg{flex:none;margin-top:2px}
+.destinationFields{display:grid;gap:14px;min-width:0;margin:16px 0 0;border:0;padding:0}
+.destinationRow{display:grid;gap:12px;min-width:0;border:1px solid #e3ebe5;border-radius:9px;background:#fff;padding:14px}
+.url{display:block;overflow-wrap:anywhere;color:#4f6757;font-size:12px;line-height:1.6}
+.targetInputs{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1fr);gap:12px}
+.panel label{display:grid;gap:6px;min-width:0;color:#425b4a;font-size:12px;font-weight:600}
+.panel input:not([type=checkbox]),.panel textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid #d9e4dc;border-radius:8px;background:#fff;padding:10px;color:#304d3a;font:inherit;font-size:13px;font-weight:400;line-height:1.5}
+.panel textarea{resize:vertical}
+.panel input::placeholder{color:#7c897f}
+.panel small{display:block;color:#65766b;font-size:11px;font-weight:400;line-height:1.6}
+.panel .toggle{display:flex;align-items:flex-start;gap:9px;line-height:1.6}
+.toggle input{width:17px;height:17px;flex:none;margin-top:2px;accent-color:#29634a}
+.toggle small{margin-top:4px}
+.manual{border-top:1px solid #e3ebe5;margin:16px 0 0;padding-top:12px}
+.list{display:grid;gap:16px;min-width:0}
+.proposal{min-width:0;border:1px solid #e0e8e1;border-radius:11px;background:#fff;padding:18px}
+.proposalHeading>div{min-width:0}
+.eyebrow{color:#63806e;font-size:10px;font-weight:700;letter-spacing:1px}
+.proposal h3{margin:5px 0 7px;font-size:14px;line-height:1.5}
+.proposalHeading a{display:inline-flex;align-items:center;gap:4px;word-break:break-word}
+.proposalHeading a svg{flex:none}
+.badge{display:inline-block;flex:none;border-radius:20px;padding:6px 10px;font-size:11px;font-weight:600;line-height:1.4}
+.neutral{background:#f0f3f0;color:#596c5f}
+.pending{background:#f8f2e4;color:#85672f}
+.success{background:#ebf5ec;color:#326b44}
+.errorTone{background:#fff0ed;color:#994b40}
+.statusDetail{color:#546d5d}
+.comparison{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:16px}
+.before,.proposed{min-width:0;border:1px solid #e5ece6;border-radius:9px;padding:15px}
+.before{background:#f8faf8}
+.proposed{border-color:#d5e4d8;background:#f5faf5}
+.comparison h4{margin:0 0 12px;color:#3e5b47;font-size:12px}
+.panel .caption{margin:-5px 0 12px;color:#65766b;font-size:11px}
+.comparison dl{margin:0;font-size:12px}
+.comparison dt{margin-top:12px;color:#65766b;font-size:11px;font-weight:600}
+.comparison dt:first-child{margin-top:0}
+.comparison dd{margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+.editor{display:grid;gap:13px}
+.copyActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:13px}
+.copyActions button{border:0;border-bottom:1px solid #a9c3af;background:transparent;padding:4px 0;color:#286d4e;cursor:pointer}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:16px}
+.actions button{min-height:38px;max-width:100%;padding:9px 12px;text-align:center;line-height:1.5;white-space:normal}
+.panel .resultLink{display:inline-flex;align-items:center;gap:5px;padding:9px 3px;font-weight:600}
+.archiveButton{margin-left:auto;border:0;border-radius:8px;background:transparent;color:#6d6255;cursor:pointer}
+.archiveButton:hover{background:#f5f3ef}
+.notice,.error,.warning{border-radius:8px;padding:11px 12px;overflow-wrap:anywhere;font-size:12px;line-height:1.6}
+.notice{background:#ebf5ec;color:#326b44}
+.error{background:#fff0ed;color:#994b40}
+.warning{background:#faf6ed;color:#85672f}
+.restoreInfo{border-left:3px solid #b8cdbb;padding-left:12px;color:#526c5b}
+.restoreInfo summary{cursor:pointer;font-size:12px;font-weight:600}
+.savedText{white-space:pre-wrap;overflow-wrap:anywhere}
+.empty{display:grid;justify-items:center;border:1px dashed #dbe6dd;border-radius:10px;padding:28px 18px;color:#5c7a65;text-align:center}
+.empty h3{margin:12px 0 0;font-size:15px}
+.empty p{max-width:450px;margin-bottom:0;color:#65766b}
+.history>.muted{margin:0;padding:0 16px 16px}
+.history>.list{padding:0 14px 14px}
+@media(max-width:1000px){.targetInputs{grid-template-columns:1fr 1fr}.targetInputs>label:first-child{grid-column:1/-1}}
+@media(max-width:650px){.panel{padding:16px;gap:14px}.heading,.proposalHeading{flex-direction:column;gap:12px}.heading>button{width:100%}.comparison,.targetInputs{grid-template-columns:1fr}.targetInputs>label:first-child{grid-column:auto}.proposal{padding:14px}.destinationBody{padding:0 12px 12px}.destinationRow{padding:12px}.summaryHint{display:block;margin:6px 0 0}.badge{align-self:flex-start}.panel input:not([type=checkbox]),.panel textarea{font-size:16px}.actions>button{flex:1 1 180px}.archiveButton{margin-left:0}.history>.list{padding:0 9px 9px}.before,.proposed{padding:12px}}
