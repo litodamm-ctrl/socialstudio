@@ -144,10 +144,10 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
         db.prepare(`INSERT INTO posts (id, owner_id, brand, caption, media_type, media_url, scheduled_at, status, created_at)
           SELECT ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?
           WHERE EXISTS (SELECT 1 FROM autopilot_slots WHERE id = ? AND claim_id = ? AND status = 'processing')
-          AND EXISTS (SELECT 1 FROM autopilot_worker WHERE id = 'generation' AND claim_id = ?)
+          AND EXISTS (SELECT 1 FROM autopilot_worker WHERE id = ? AND claim_id = ?)
           AND EXISTS (SELECT 1 FROM brand_registry WHERE id = ? AND active = 1 AND auto_schedule = 1 AND (? <> 'Historia' OR auto_stories = 1))
           AND NOT EXISTS (SELECT 1 FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled','published') AND scheduled_at >= ? AND scheduled_at < ? AND (CASE WHEN media_type = 'Historia' THEN 'Historia' ELSE 'Imagen' END) = ?)`)
-          .bind(postId, due.owner_id, due.name, result.caption, due.media_type, result.mediaUrl, due.scheduled_at, Date.now(), due.id, claim, claim, due.brand_id, due.media_type, due.owner_id, due.name, start, end, due.media_type),
+          .bind(postId, due.owner_id, due.name, result.caption, due.media_type, result.mediaUrl, due.scheduled_at, Date.now(), due.id, claim, workerId, claim, due.brand_id, due.media_type, due.owner_id, due.name, start, end, due.media_type),
         db.prepare(`UPDATE autopilot_slots SET status = CASE WHEN EXISTS (SELECT 1 FROM posts WHERE id = ?) THEN 'completed' ELSE 'pending' END,
           post_id = CASE WHEN EXISTS (SELECT 1 FROM posts WHERE id = ?) THEN ? ELSE NULL END, updated_at = ?
           WHERE id = ? AND claim_id = ? AND status = 'processing'`)
