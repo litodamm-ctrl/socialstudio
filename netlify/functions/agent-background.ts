@@ -6,7 +6,10 @@ declare const Netlify: { env: { get(name: string): string | undefined } };
 export default async (request: Request) => {
   const secret = Netlify.env.get("CRON_SECRET");
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) return;
-  if (!env.DB || !env.BUCKET || !env.OPENAI_API_KEY) return;
+  const hasProviderAI = Boolean(env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL);
+  const hasGatewayAI = Boolean(process.env.NETLIFY_AI_GATEWAY_KEY && process.env.NETLIFY_AI_GATEWAY_URL);
+  console.info("Social Studio agent runtime", JSON.stringify({ db: Boolean(env.DB), bucket: Boolean(env.BUCKET), hasProviderAI, hasGatewayAI }));
+  if (!env.DB || !env.BUCKET || (!hasProviderAI && !hasGatewayAI)) return;
   await repairPendingStories(env.DB, env.BUCKET);
   await processBrandAgentSchedules(env.DB);
 };
