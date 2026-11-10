@@ -11,5 +11,10 @@ export default async (request: Request) => {
   console.warn("Social Studio agent runtime", JSON.stringify({ db: Boolean(env.DB), bucket: Boolean(env.BUCKET), hasProviderAI, hasGatewayAI }));
   if (!env.DB || !env.BUCKET) return;
   await repairPendingStories(env.DB, env.BUCKET);
-  await processBrandAgentSchedules(env.DB);
+  const priorityBrands = ["D’Neyla", "Bahia Investment", "Manglar"];
+  const results = await Promise.allSettled([
+    ...priorityBrands.map(brandName => processBrandAgentSchedules(env.DB!, { brandName })),
+    processBrandAgentSchedules(env.DB, { excludeNames: priorityBrands }),
+  ]);
+  for (const result of results) if (result.status === "rejected") console.error("Social Studio scheduler branch failed", result.reason);
 };
