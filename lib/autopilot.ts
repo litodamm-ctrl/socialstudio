@@ -2,19 +2,19 @@ const DAY = 86_400_000;
 export const CYCLE_DAYS = 30;
 export function localDate(now: number) { return new Date(now - 5 * 3_600_000).toISOString().slice(0, 10); }
 export function addDays(date: string, days: number) { return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10); }
-export function cycleDates(now: number, previousEnd?: string): { start: string; end: string } | null {
+export function cycleDates(now: number, previousEnd?: string, cycleDays = CYCLE_DAYS): { start: string; end: string } | null {
   const today = localDate(now);
   if (previousEnd && today < addDays(previousEnd, -2)) return null;
   const start = previousEnd && previousEnd >= today ? addDays(previousEnd, 1) : addDays(today, 1);
-  return { start, end: addDays(start, CYCLE_DAYS - 1) };
+  return { start, end: addDays(start, cycleDays - 1) };
 }
-export function cycleSlots(start: string, postingDays: string, feedTime: string, storyTime: string, stories: boolean) {
+export function cycleSlots(start: string, postingDays: string, feedTime: string, storyTime: string, stories: boolean, cycleDays = CYCLE_DAYS) {
   let days: unknown;
   try { days = JSON.parse(postingDays); } catch { return []; }
   if (!Array.isArray(days) || ![feedTime, storyTime].every(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t))) return [];
   const slots: Array<{date: string; mediaType: "Imagen" | "Historia"; scheduledAt: string; objective: string}> = [];
   const objectives = ["Reconocimiento", "Educación", "Comunidad", "Ventas"];
-  for (let offset = 0; offset < CYCLE_DAYS; offset++) {
+  for (let offset = 0; offset < cycleDays; offset++) {
     const date = addDays(start, offset);
     const epoch = Date.parse(`${date}T00:00:00Z`);
     if (!days.includes(new Date(epoch).getUTCDay())) continue;
