@@ -207,8 +207,13 @@ export async function POST(request: Request) {
     });
     const result = await response.json() as { output?: ResponseOutput[]; output_text?: string; error?: { message?: string } };
     if (!response.ok) {
-      console.error("OpenAI creative generation failed", response.status, result.error?.message?.slice(0, 160) ?? "request rejected");
-      return Response.json({ error: "El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI." }, { status: 502 });
+      const providerMessage = result.error?.message ?? "";
+      const creditsExhausted = response.status === 429 && /no credits remaining|credit_balance_exhausted/i.test(providerMessage);
+      console.error("OpenAI creative generation failed", response.status, providerMessage.slice(0, 160) || "request rejected");
+      return Response.json({
+        error: creditsExhausted ? "La cuenta de OpenAI API no tiene créditos disponibles." : "El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI.",
+        code: creditsExhausted ? "OPENAI_CREDITS_EXHAUSTED" : "OPENAI_GENERATION_FAILED",
+      }, { status: 502 });
     }
 
     const output = result.output ?? [];
