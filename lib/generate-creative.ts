@@ -86,8 +86,16 @@ export async function POST(request: Request) {
       sourceWarnings.push(error instanceof Error ? error.message : "No se pudo leer Instagram.");
       return {content: [] as Array<Record<string,string>>, text: ""};
     }) : {content: [] as Array<Record<string,string>>, text: ""};
-    const visualStyle = useInstagramStyle && instagramMaterials.content.length
-      ? await instagramStyleGuide(env.DB, ownerId, brand, instagramMaterials.content, env.OPENAI_API_KEY) : "";
+    let visualStyle = "";
+    if (useInstagramStyle && instagramMaterials.content.length) {
+      try {
+        visualStyle = await instagramStyleGuide(env.DB, ownerId, brand, instagramMaterials.content, env.OPENAI_API_KEY);
+      } catch (error) {
+        const warning = error instanceof Error ? error.message : "No se pudo extraer el estilo de Instagram.";
+        sourceWarnings.push(`${warning} Se continuará con la esencia de marca y las demás referencias disponibles.`);
+        console.warn("Instagram style guide unavailable; continuing without it", brand, warning.slice(0, 160));
+      }
+    }
     const referenceContent: Array<Record<string, string>> = [];
     if (websiteContext) {
       const pages = enhanceProducts ? await expandedWebsiteCatalog(env.DB,websiteContext).catch(() => [websiteContext]) : [websiteContext];
