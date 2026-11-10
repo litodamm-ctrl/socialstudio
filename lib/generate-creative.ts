@@ -185,7 +185,7 @@ export async function POST(request: Request) {
           "Devuelve los textos en el formato estructurado solicitado. Luego genera exactamente una imagen a partir del concepto visual.",
         ].join(" "),
         input: [{ role: "user", content: inputContent }],
-        tools: [{ type: "image_generation", model: "gpt-image-2.5-flare", size: mediaType === "Historia" ? "1024x1536" : "1024x1024", output_format: "jpeg", background: "opaque" }],
+        tools: [{ type: "image_generation", size: mediaType === "Historia" ? "1024x1536" : "1024x1024", output_format: "jpeg", background: "opaque" }],
         tool_choice: { type: "image_generation" },
         text: {
           format: {
