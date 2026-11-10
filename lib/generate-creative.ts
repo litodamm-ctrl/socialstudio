@@ -161,7 +161,8 @@ export async function POST(request: Request) {
       ...(visualStyle ? [{type:"input_text",text:`Guía visual extraída de Instagram: ${visualStyle}. Conserva esta identidad con la fotografía principal seleccionada.`}] : []),
       ...selectedContent,
     ];
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const openAIBaseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+    const response = await fetch(`${openAIBaseUrl}/responses`, {
       method: "POST",
       signal: AbortSignal.timeout(240_000),
       headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
