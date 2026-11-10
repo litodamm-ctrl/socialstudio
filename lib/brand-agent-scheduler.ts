@@ -54,6 +54,13 @@ export async function processBrandAgentSchedules(db: D1Database) {
       SET status = 'pending', attempts = 0, claim_id = NULL, last_error = NULL, updated_at = ?
       WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND updated_at < ?`)
       .bind(now, publicationCutoff, Date.parse("2026-11-10T06:17:40.000Z")).run();
+    // Recover rows that exhausted their retry budget while the API credit balance was empty
+    // before the provider-specific error code was available.
+    await db.prepare(`UPDATE autopilot_slots
+      SET attempts = 0, claim_id = NULL, updated_at = ?
+      WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND attempts >= 4
+      AND last_error = 'El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI.'`)
+      .bind(now + 5 * 60_000, publicationCutoff).run();
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
       JOIN brand_registry b ON b.id = s.brand_id AND b.owner_id = s.owner_id
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
@@ -98,8 +105,12 @@ export async function processBrandAgentSchedules(db: D1Database) {
           brief: `Contenido de ${due.media_type === 'Historia' ? 'historia' : 'feed'} para ${due.local_date}. Objetivo ${due.objective}. Usa la información vigente de esta marca y evita repetir temas recientes.`,
           callToAction: "Propón una invitación coherente con la marca sin inventar ofertas ni datos." }),
       }));
-      const result = await generated.json() as { error?: string; mediaUrl?: string; caption?: string };
-      if (!generated.ok || !result.mediaUrl || !result.caption) throw new Error(result.error ?? "El agente no devolvió contenido completo.");
+      const result = await generated.json() as { error?: string; code?: string; mediaUrl?: string; caption?: string };
+      if (!generated.ok || !result.mediaUrl || !result.caption) {
+        const failure = new Error(result.error ?? "El agente no devolvió contenido completo.") as Error & { code?: string };
+        failure.code = result.code;
+        throw failure;
+      }
       const postId = crypto.randomUUID();
       await db.batch([
         db.prepare(`INSERT INTO posts (id, owner_id, brand, caption, media_type, media_url, scheduled_at, status, created_at)
@@ -118,9 +129,19 @@ export async function processBrandAgentSchedules(db: D1Database) {
       console.info(created ? "Social Studio autopilot generated" : "Social Studio autopilot insert skipped", due.name, due.media_type, due.local_date, postId);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0,300) : "No se pudo generar el contenido.";
+      const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      const creditsExhausted = code === "OPENAI_CREDITS_EXHAUSTED";
       console.error("Social Studio autopilot generation failed", due.name, due.media_type, due.local_date, message);
-      await db.prepare("UPDATE autopilot_slots SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND claim_id = ? AND status = 'processing'")
-        .bind(message, Date.now(), due.id, claim).run();
+      if (creditsExhausted) {
+        await db.prepare(`UPDATE autopilot_slots
+          SET status = 'failed', attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+              last_error = ?, updated_at = ?
+          WHERE id = ? AND claim_id = ? AND status = 'processing'`)
+          .bind(message, Date.now() + 5 * 60_000, due.id, claim).run();
+      } else {
+        await db.prepare("UPDATE autopilot_slots SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND claim_id = ? AND status = 'processing'")
+          .bind(message, Date.now(), due.id, claim).run();
+      }
     }
   } finally {
     await db.prepare("UPDATE autopilot_worker SET lease_until = 0 WHERE id = 'generation' AND claim_id = ?").bind(claim).run();
