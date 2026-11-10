@@ -182,11 +182,9 @@ export async function POST(request: Request) {
           essence ? `Esencia y guía de marca: ${essence}` : "No hay guía de marca adicional; conserva una voz clara y profesional.",
           includeDrive && (driveContext || driveMaterials.text || driveMaterials.content.length) ? "Usa el material de Google Drive como referencia de la marca; verifica su vigencia." : "",
           dneyla ? `${DNEYLA_ESSENCE}\n${DNEYLA_IMAGE_RULES}` : manglar ? `${MANGLAR_ESSENCE}\n${MANGLAR_IMAGE_RULES}` : "",
-          "Devuelve los textos en el formato estructurado solicitado. Luego genera exactamente una imagen a partir del concepto visual.",
+          "Devuelve únicamente los textos en el formato estructurado solicitado. El campo imagePrompt debe describir con precisión el creativo final para que otro paso genere la imagen usando la fotografía principal real como referencia obligatoria.",
         ].join(" "),
         input: [{ role: "user", content: inputContent }],
-        tools: [{ type: "image_generation", size: mediaType === "Historia" ? "1024x1536" : "1024x1024", output_format: "jpeg", background: "opaque" }],
-        tool_choice: { type: "image_generation" },
         text: {
           format: {
             type: "json_schema",
@@ -220,12 +218,11 @@ export async function POST(request: Request) {
     }
 
     const output = result.output ?? [];
-    const generatedImage = output.find((item) => item.type === "image_generation_call")?.result;
     const textContent = result.output_text ?? output
       .filter((item) => item.type === "message")
       .flatMap((item) => item.content ?? [])
       .find((item) => item.type === "output_text")?.text;
-    if (!generatedImage || !textContent) return Response.json({ error: "El agente no devolvió la imagen y los textos completos." }, { status: 502 });
+    if (!textContent) return Response.json({ error: "El agente no devolvió los textos del creativo." }, { status: 502 });
 
     const copy = JSON.parse(textContent) as GeneratedText;
     if (!copy.caption || copy.caption.length > 2200 || !copy.imagePrompt || !Array.isArray(copy.hashtags)) {
@@ -234,6 +231,43 @@ export async function POST(request: Request) {
     if (dneyla && /pide\s+hoy|\$\s*\d|\b\d[\d.,]*\s*(?:COP|pesos|USD)\b/i.test([copy.headline, copy.caption].join(" "))) {
       return Response.json({ error: "El creativo no cumplió las reglas de D’Neyla: sin precios ni pide hoy. No se guardó ni se programó." }, { status: 422 });
     }
+
+    const logoReferences = materials
+      .filter(item => item.type === "input_image" && item.source_role === "logo" && typeof item.image_url === "string")
+      .slice(0, 3)
+      .map(item => ({ image_url: item.image_url }));
+    const imageEditPrompt = [
+      copy.imagePrompt,
+      `Formato final: ${mediaType === "Historia" ? "vertical 9:16 para historia de Instagram" : "cuadrado 1:1 para feed de Instagram"}.`,
+      "La primera imagen de referencia es la fotografía principal OBLIGATORIA. Conserva fielmente el producto, inmueble, comida, artesanía o sujeto real: identidad, forma, proporciones, materiales y rasgos visuales. No lo sustituyas por otro producto ni inventes otra propiedad.",
+      logoReferences.length ? "Las imágenes adicionales son únicamente logos/identidad de marca; no son productos alternativos." : "",
+      visualStyle ? `Identidad visual de la marca: ${visualStyle}` : "",
+      copy.headline ? `Titular sugerido: ${copy.headline}. Si incluyes texto dentro de la imagen, mantenlo breve, correcto y legible.` : "",
+      mediaType === "Historia" ? "Composición a sangre, sin barras ni marcos; mantén contenido importante dentro de la zona segura central." : "Composición limpia de feed, jerarquía visual clara.",
+    ].filter(Boolean).join("\n");
+
+    const imageResponse = await fetch(`${openAIBaseUrl}/v1/images/edits`, {
+      method: "POST",
+      signal: AbortSignal.timeout(240_000),
+      headers: { Authorization: `Bearer ${openAIKey}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-image-2.5-flare",
+        images: [{ image_url: principal.item.image_url }, ...logoReferences],
+        prompt: imageEditPrompt,
+        size: mediaType === "Historia" ? "1024x1536" : "1024x1024",
+        output_format: "jpeg",
+        background: "opaque",
+      }),
+    });
+    const imageResult = await imageResponse.json() as { data?: Array<{ b64_json?: string }>; error?: { message?: string } };
+    if (!imageResponse.ok) {
+      const providerMessage = imageResult.error?.message ?? "";
+      console.error("OpenAI image edit failed", imageResponse.status, providerMessage.slice(0, 200) || "request rejected");
+      return Response.json({ error: "El agente pudo crear el copy, pero no pudo generar la imagen final." }, { status: 502 });
+    }
+    const generatedImage = imageResult.data?.[0]?.b64_json;
+    if (!generatedImage) return Response.json({ error: "El proveedor no devolvió la imagen final." }, { status: 502 });
+
     const rawBytes = Uint8Array.from(atob(generatedImage), (character) => character.charCodeAt(0));
     if (!rawBytes.byteLength || rawBytes.byteLength > MAX_IMAGE_BYTES) return Response.json({ error: "El creativo generado superó el límite de tamaño." }, { status: 502 });
     const bytes = mediaType === "Historia" ? await formatStory(rawBytes, false, true) : await sharp(rawBytes, { limitInputPixels: 25_000_000 }).rotate()
