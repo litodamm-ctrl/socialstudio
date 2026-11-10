@@ -46,8 +46,15 @@ export async function processBrandAgentSchedules(db: D1Database) {
           .bind(crypto.randomUUID(), cycleId, brand.owner_id, brand.id, slot.date, slot.mediaType, slot.scheduledAt, slot.objective, now)),
       ]);
     }
+    const publicationCutoff = new Date(now + 15 * 60_000).toISOString();
     await db.prepare("UPDATE autopilot_slots SET status = 'skipped', last_error = 'Fecha vencida; no se publicará contenido atrasado.', updated_at = ? WHERE status IN ('pending', 'failed', 'processing') AND scheduled_at <= ?")
-      .bind(now, new Date(now + 15 * 60_000).toISOString()).run();
+      .bind(now, publicationCutoff).run();
+    // One-time recovery for future slots that failed before the Instagram-style fallback fix.
+    // Updating updated_at makes this idempotent: recovered rows no longer match the recovery cutoff.
+    await db.prepare(`UPDATE autopilot_slots
+      SET status = 'pending', attempts = 0, claim_id = NULL, last_error = NULL, updated_at = ?
+      WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND updated_at < ?`)
+      .bind(now, publicationCutoff, Date.parse("2026-11-10T06:25:00.000Z")).run();
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
       JOIN brand_registry b ON b.id = s.brand_id AND b.owner_id = s.owner_id
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
