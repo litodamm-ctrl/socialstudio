@@ -17,7 +17,6 @@ export async function processBrandAgentSchedules(db: D1Database) {
     .bind(claim, now + 12 * 60_000, now).first();
   if (!lock) return;
   try {
-    if (await processCalendarRefresh(db, generateCreative, claim)) return;
     const brands = await db.prepare(`SELECT b.* FROM brand_registry b
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
       WHERE b.active = 1 AND b.auto_schedule = 1 AND length(trim(b.brand_essence)) >= 20`).all<Brand>();
@@ -64,6 +63,12 @@ export async function processBrandAgentSchedules(db: D1Database) {
       ORDER BY s.local_date, s.attempts, COALESCE((SELECT MAX(t.updated_at) FROM autopilot_slots t WHERE t.brand_id = b.id AND t.attempts > 0),0), s.scheduled_at LIMIT 1`)
       .bind(now - 60_000).first<Slot>();
     if (!due) {
+      // Calendar repair is useful, but it must never starve the automatic content queue.
+      // Only spend this invocation on a refresh when there is no new autopilot slot to generate.
+      if (await processCalendarRefresh(db, generateCreative, claim)) {
+        console.info("Social Studio calendar refresh processed while autopilot was idle");
+        return;
+      }
       const summary = await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
       console.info("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
       return;
