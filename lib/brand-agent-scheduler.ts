@@ -52,6 +52,7 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .bind(crypto.randomUUID(), cycleId, brand.owner_id, brand.id, slot.date, slot.mediaType, slot.scheduledAt, slot.objective, now)),
       ]);
+      if (horizonDays === 60) console.warn("Social Studio 60-day horizon", brand.name, dates.start, dates.end, "slots", slots.length);
     }
     const publicationCutoff = new Date(now + 15 * 60_000).toISOString();
     await db.prepare("UPDATE autopilot_slots SET status = 'skipped', last_error = 'Fecha vencida; no se publicará contenido atrasado.', updated_at = ? WHERE status IN ('pending', 'failed', 'processing') AND scheduled_at <= ?")
