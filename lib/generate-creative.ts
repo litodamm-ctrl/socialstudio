@@ -29,7 +29,9 @@ export async function POST(request: Request) {
   const ownerId = request.headers.get("oai-authenticated-user-id");
   if (!ownerId) return Response.json({ error: "Inicia sesión para usar el agente creativo." }, { status: 401 });
   if (!env.DB || !env.BUCKET) return Response.json({ error: "El agente necesita que estén activos el calendario y la biblioteca multimedia." }, { status: 503 });
-  if (!env.OPENAI_API_KEY) return Response.json({ error: "Falta configurar OPENAI_API_KEY como secreto del sitio para activar la generación de creativos y textos." }, { status: 503 });
+  const openAIKey = env.OPENAI_API_KEY || process.env.NETLIFY_AI_GATEWAY_KEY;
+  const configuredAIBaseUrl = process.env.OPENAI_BASE_URL || process.env.NETLIFY_AI_GATEWAY_URL;
+  if (!openAIKey || !configuredAIBaseUrl) return Response.json({ error: "No hay proveedor de IA disponible para generar creativos." }, { status: 503 });
 
   let input: RequestBody;
   try {
@@ -89,7 +91,7 @@ export async function POST(request: Request) {
     let visualStyle = "";
     if (useInstagramStyle && instagramMaterials.content.length) {
       try {
-        visualStyle = await instagramStyleGuide(env.DB, ownerId, brand, instagramMaterials.content, env.OPENAI_API_KEY);
+        visualStyle = await instagramStyleGuide(env.DB, ownerId, brand, instagramMaterials.content, openAIKey, configuredAIBaseUrl);
       } catch (error) {
         const warning = error instanceof Error ? error.message : "No se pudo extraer el estilo de Instagram.";
         sourceWarnings.push(`${warning} Se continuará con la esencia de marca y las demás referencias disponibles.`);
@@ -161,11 +163,11 @@ export async function POST(request: Request) {
       ...(visualStyle ? [{type:"input_text",text:`Guía visual extraída de Instagram: ${visualStyle}. Conserva esta identidad con la fotografía principal seleccionada.`}] : []),
       ...selectedContent,
     ];
-    const openAIBaseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com").replace(/\/$/, "");
+    const openAIBaseUrl = configuredAIBaseUrl.replace(/\/$/, "");
     const response = await fetch(`${openAIBaseUrl}/v1/responses`, {
       method: "POST",
       signal: AbortSignal.timeout(240_000),
-      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+      headers: { Authorization: `Bearer ${openAIKey}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: "gpt-6-luna",
         instructions: [
