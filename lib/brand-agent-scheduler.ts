@@ -77,7 +77,7 @@ export async function processBrandAgentSchedules(db: D1Database) {
         return;
       }
       const summary = await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
-      console.info("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
+      console.warn("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
       return;
     }
     const start = `${due.local_date}T05:00:00.000Z`;
@@ -126,7 +126,7 @@ export async function processBrandAgentSchedules(db: D1Database) {
           .bind(postId, postId, postId, Date.now(), due.id, claim),
       ]);
       const created = await db.prepare("SELECT id FROM posts WHERE id = ?").bind(postId).first<{id:string}>();
-      console.info(created ? "Social Studio autopilot generated" : "Social Studio autopilot insert skipped", due.name, due.media_type, due.local_date, postId);
+      console.warn(created ? "Social Studio autopilot generated" : "Social Studio autopilot insert skipped", due.name, due.media_type, due.local_date, postId);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0,300) : "No se pudo generar el contenido.";
       const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
