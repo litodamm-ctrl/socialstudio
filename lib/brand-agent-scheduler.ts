@@ -30,17 +30,28 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
     for (const brand of brands) {
       const latest = await db.prepare("SELECT id, start_date, end_date FROM autopilot_cycles WHERE owner_id = ? AND brand_id = ? ORDER BY start_date DESC LIMIT 1")
         .bind(brand.owner_id, brand.id).first<{id: string; start_date: string; end_date: string}>();
-      // Extend an active legacy cycle once, appending only its new dates.
-      // Existing posts, skipped slots and user edits remain untouched.
-      const horizonDays = ["D’Neyla", "Bahia Investment", "Manglar"].includes(brand.name) ? 60 : CYCLE_DAYS;
-      const extendedEnd = latest && addDays(latest.start_date, horizonDays - 1);
-      const extend = Boolean(latest && extendedEnd && latest.end_date >= localDate(now) && latest.end_date < extendedEnd);
+      // Priority brands must cover the next 60 full future days, regardless of when
+      // an existing cycle originally started. Existing posts and edits remain untouched.
+      const priority60 = ["D’Neyla", "Bahia Investment", "Manglar"].includes(brand.name);
+      const today = localDate(now);
+      const requestedEnd = priority60 ? addDays(today, 60) : null;
+      const legacyEnd = latest && addDays(latest.start_date, CYCLE_DAYS - 1);
+      const extendedEnd = latest
+        ? (requestedEnd && (!legacyEnd || requestedEnd > legacyEnd) ? requestedEnd : legacyEnd)
+        : null;
+      const extend = Boolean(latest && extendedEnd && latest.end_date >= today && latest.end_date < extendedEnd);
       const dates = extend && latest && extendedEnd
         ? { start: latest.start_date, end: extendedEnd }
-        : cycleDates(now, latest?.end_date, horizonDays);
-      if (!dates) continue;
+        : priority60 && (!latest || latest.end_date < today)
+          ? { start: addDays(today, 1), end: requestedEnd! }
+          : cycleDates(now, latest?.end_date, CYCLE_DAYS);
+      if (!dates) {
+        if (priority60 && latest) console.warn("Social Studio 60-day horizon already covered", brand.name, latest.start_date, latest.end_date);
+        continue;
+      }
       const cycleId = extend && latest ? latest.id : `${brand.id}:${dates.start}`;
-      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories), horizonDays)
+      const cycleSpanDays = Math.max(1, Math.round((Date.parse(`${dates.end}T00:00:00Z`) - Date.parse(`${dates.start}T00:00:00Z`)) / 86_400_000) + 1);
+      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories), cycleSpanDays)
         .filter(slot => !extend || !latest || slot.date > latest.end_date);
       await db.batch([
         db.prepare("INSERT OR IGNORE INTO autopilot_cycles (id, owner_id, brand_id, start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -52,7 +63,7 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .bind(crypto.randomUUID(), cycleId, brand.owner_id, brand.id, slot.date, slot.mediaType, slot.scheduledAt, slot.objective, now)),
       ]);
-      if (horizonDays === 60) console.warn("Social Studio 60-day horizon", brand.name, dates.start, dates.end, "slots", slots.length);
+      if (priority60) console.warn("Social Studio 60-day horizon", brand.name, dates.start, dates.end, "slots", slots.length);
     }
     const publicationCutoff = new Date(now + 15 * 60_000).toISOString();
     await db.prepare("UPDATE autopilot_slots SET status = 'skipped', last_error = 'Fecha vencida; no se publicará contenido atrasado.', updated_at = ? WHERE status IN ('pending', 'failed', 'processing') AND scheduled_at <= ?")
