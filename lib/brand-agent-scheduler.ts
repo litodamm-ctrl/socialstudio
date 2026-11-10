@@ -7,32 +7,40 @@ type Brand = { id: string; owner_id: string; name: string; brand_essence: string
 type Slot = { id: string; brand_id: string; owner_id: string; local_date: string; media_type: string; scheduled_at: string; objective: string; name: string; brand_essence: string };
 
 // One paid creative at a time across invocations. Slots survive crashes and cancellations.
-export async function processBrandAgentSchedules(db: D1Database) {
+type SchedulerOptions = { brandName?: string; excludeNames?: string[] };
+
+export async function processBrandAgentSchedules(db: D1Database, options: SchedulerOptions = {}) {
   await ensureBrandRegistry(db);
   await ensureAutopilotTables(db);
   const now = Date.now();
   const claim = crypto.randomUUID();
-  await db.prepare("INSERT OR IGNORE INTO autopilot_worker (id, lease_until) VALUES ('generation', 0)").run();
-  const lock = await db.prepare("UPDATE autopilot_worker SET claim_id = ?, lease_until = ? WHERE id = 'generation' AND lease_until < ? RETURNING id")
-    .bind(claim, now + 12 * 60_000, now).first();
+  const workerId = options.brandName ? `generation:${options.brandName}` : options.excludeNames?.length ? "generation:other-brands" : "generation";
+  await db.prepare("INSERT OR IGNORE INTO autopilot_worker (id, lease_until) VALUES (?, 0)").bind(workerId).run();
+  const lock = await db.prepare("UPDATE autopilot_worker SET claim_id = ?, lease_until = ? WHERE id = ? AND lease_until < ? RETURNING id")
+    .bind(claim, now + 12 * 60_000, workerId, now).first();
   if (!lock) return;
   try {
-    const brands = await db.prepare(`SELECT b.* FROM brand_registry b
+    const allBrands = await db.prepare(`SELECT b.* FROM brand_registry b
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
       WHERE b.active = 1 AND b.auto_schedule = 1 AND length(trim(b.brand_essence)) >= 20`).all<Brand>();
-    for (const brand of brands.results ?? []) {
+    const excluded = new Set(options.excludeNames ?? []);
+    const brands = (allBrands.results ?? []).filter(brand =>
+      options.brandName ? brand.name === options.brandName : !excluded.has(brand.name)
+    );
+    for (const brand of brands) {
       const latest = await db.prepare("SELECT id, start_date, end_date FROM autopilot_cycles WHERE owner_id = ? AND brand_id = ? ORDER BY start_date DESC LIMIT 1")
         .bind(brand.owner_id, brand.id).first<{id: string; start_date: string; end_date: string}>();
       // Extend an active legacy cycle once, appending only its new dates.
       // Existing posts, skipped slots and user edits remain untouched.
-      const extendedEnd = latest && addDays(latest.start_date, CYCLE_DAYS - 1);
+      const horizonDays = ["D’Neyla", "Bahia Investment", "Manglar"].includes(brand.name) ? 60 : CYCLE_DAYS;
+      const extendedEnd = latest && addDays(latest.start_date, horizonDays - 1);
       const extend = Boolean(latest && extendedEnd && latest.end_date >= localDate(now) && latest.end_date < extendedEnd);
       const dates = extend && latest && extendedEnd
         ? { start: latest.start_date, end: extendedEnd }
-        : cycleDates(now, latest?.end_date);
+        : cycleDates(now, latest?.end_date, horizonDays);
       if (!dates) continue;
       const cycleId = extend && latest ? latest.id : `${brand.id}:${dates.start}`;
-      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories))
+      const slots = cycleSlots(dates.start, brand.posting_days, brand.preferred_time, brand.story_time, Boolean(brand.auto_stories), horizonDays)
         .filter(slot => !extend || !latest || slot.date > latest.end_date);
       await db.batch([
         db.prepare("INSERT OR IGNORE INTO autopilot_cycles (id, owner_id, brand_id, start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -61,14 +69,20 @@ export async function processBrandAgentSchedules(db: D1Database) {
       WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND attempts >= 4
       AND last_error = 'El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI.'`)
       .bind(now + 5 * 60_000, publicationCutoff).run();
+    const scopeClause = options.brandName
+      ? " AND b.name = ?"
+      : options.excludeNames?.length
+        ? ` AND b.name NOT IN (${options.excludeNames.map(() => "?").join(",")})`
+        : "";
+    const scopeValues = options.brandName ? [options.brandName] : (options.excludeNames ?? []);
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
       JOIN brand_registry b ON b.id = s.brand_id AND b.owner_id = s.owner_id
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
       WHERE b.active = 1 AND b.auto_schedule = 1 AND s.attempts < 4
       AND (s.status = 'pending' OR (s.status IN ('failed','processing') AND s.updated_at < ?))
-      AND (s.media_type <> 'Historia' OR b.auto_stories = 1)
+      AND (s.media_type <> 'Historia' OR b.auto_stories = 1)${scopeClause}
       ORDER BY s.local_date, s.attempts, COALESCE((SELECT MAX(t.updated_at) FROM autopilot_slots t WHERE t.brand_id = b.id AND t.attempts > 0),0), s.scheduled_at LIMIT 1`)
-      .bind(now - 60_000).first<Slot>();
+      .bind(now - 60_000, ...scopeValues).first<Slot>();
     if (!due) {
       // Calendar repair is useful, but it must never starve the automatic content queue.
       // Only spend this invocation on a refresh when there is no new autopilot slot to generate.
@@ -76,7 +90,9 @@ export async function processBrandAgentSchedules(db: D1Database) {
         console.info("Social Studio calendar refresh processed while autopilot was idle");
         return;
       }
-      const summary = await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
+      const summary = options.brandName
+        ? await db.prepare(`SELECT s.status, COUNT(*) AS total FROM autopilot_slots s JOIN brand_registry b ON b.id=s.brand_id WHERE b.name=? GROUP BY s.status ORDER BY s.status`).bind(options.brandName).all<{status:string;total:number}>()
+        : await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
       console.warn("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
       return;
     }
@@ -144,6 +160,6 @@ export async function processBrandAgentSchedules(db: D1Database) {
       }
     }
   } finally {
-    await db.prepare("UPDATE autopilot_worker SET lease_until = 0 WHERE id = 'generation' AND claim_id = ?").bind(claim).run();
+    await db.prepare("UPDATE autopilot_worker SET lease_until = 0 WHERE id = ? AND claim_id = ?").bind(workerId, claim).run();
   }
 }
