@@ -58,12 +58,16 @@ export async function processBrandAgentSchedules(db: D1Database) {
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
       JOIN brand_registry b ON b.id = s.brand_id AND b.owner_id = s.owner_id
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
-      WHERE b.active = 1 AND b.auto_schedule = 1 AND s.attempts < 3
+      WHERE b.active = 1 AND b.auto_schedule = 1 AND s.attempts < 4
       AND (s.status = 'pending' OR (s.status IN ('failed','processing') AND s.updated_at < ?))
       AND (s.media_type <> 'Historia' OR b.auto_stories = 1)
       ORDER BY s.local_date, s.attempts, COALESCE((SELECT MAX(t.updated_at) FROM autopilot_slots t WHERE t.brand_id = b.id AND t.attempts > 0),0), s.scheduled_at LIMIT 1`)
-      .bind(now - 30 * 60_000).first<Slot>();
-    if (!due) return;
+      .bind(now - 60_000).first<Slot>();
+    if (!due) {
+      const summary = await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
+      console.info("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
+      return;
+    }
     const start = `${due.local_date}T05:00:00.000Z`;
     const end = new Date(Date.parse(start) + 86_400_000).toISOString();
     const occupied = await db.prepare(`SELECT id FROM posts WHERE owner_id = ? AND brand = ? AND status IN ('scheduled','published')
@@ -105,8 +109,11 @@ export async function processBrandAgentSchedules(db: D1Database) {
           WHERE id = ? AND claim_id = ? AND status = 'processing'`)
           .bind(postId, postId, postId, Date.now(), due.id, claim),
       ]);
+      const created = await db.prepare("SELECT id FROM posts WHERE id = ?").bind(postId).first<{id:string}>();
+      console.info(created ? "Social Studio autopilot generated" : "Social Studio autopilot insert skipped", due.name, due.media_type, due.local_date, postId);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0,300) : "No se pudo generar el contenido.";
+      console.error("Social Studio autopilot generation failed", due.name, due.media_type, due.local_date, message);
       await db.prepare("UPDATE autopilot_slots SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND claim_id = ? AND status = 'processing'")
         .bind(message, Date.now(), due.id, claim).run();
     }
