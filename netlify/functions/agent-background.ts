@@ -13,15 +13,45 @@ export default async (request: Request) => {
   if (!env.DB || !env.BUCKET) return;
   await repairPendingStories(env.DB, env.BUCKET);
   const priorityBrands = ["D’Neyla", "Bahia Investment", "Manglar"];
-  const fillThrough = addDays(localDate(Date.now()), 30);
+  const today = localDate(Date.now());
+  const fillStart = addDays(today, 1);
+  const splitDate = addDays(today, 30);
+  const secondStart = addDays(today, 31);
+  const fillThrough = addDays(today, 60);
   const results = await Promise.allSettled([
-    ...priorityBrands.map(async brandName => {
-      for (let i = 0; i < 5; i++) {
-        await processBrandAgentSchedules(env.DB!, { brandName, maxLocalDate: fillThrough });
-      }
-    }),
+    ...priorityBrands.flatMap(brandName => [
+      (async () => {
+        for (let i = 0; i < 6; i++) {
+          await processBrandAgentSchedules(env.DB!, {
+            brandName,
+            minLocalDate: fillStart,
+            maxLocalDate: splitDate,
+            workerKey: `${brandName}:days-1-30`,
+          });
+        }
+      })(),
+      (async () => {
+        for (let i = 0; i < 6; i++) {
+          await processBrandAgentSchedules(env.DB!, {
+            brandName,
+            minLocalDate: secondStart,
+            maxLocalDate: fillThrough,
+            workerKey: `${brandName}:days-31-60`,
+          });
+        }
+      })(),
+    ]),
     processBrandAgentSchedules(env.DB, { excludeNames: priorityBrands }),
   ]);
-  console.warn("Social Studio 30-day autofill window", fillThrough);
+  console.warn("Social Studio 60-day autofill window", fillStart, fillThrough);
   for (const result of results) if (result.status === "rejected") console.error("Social Studio scheduler branch failed", result.reason);
+
+  const summary = await env.DB.prepare(`SELECT b.name, s.status, COUNT(*) AS total
+    FROM autopilot_slots s
+    JOIN brand_registry b ON b.id=s.brand_id AND b.owner_id=s.owner_id
+    WHERE b.name IN ('D’Neyla','Bahia Investment','Manglar')
+      AND s.local_date >= ? AND s.local_date <= ?
+    GROUP BY b.name, s.status
+    ORDER BY b.name, s.status`).bind(fillStart, fillThrough).all<{name:string;status:string;total:number}>();
+  console.warn("Social Studio 60-day autofill summary", JSON.stringify(summary.results ?? []));
 };
