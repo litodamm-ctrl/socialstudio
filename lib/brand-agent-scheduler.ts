@@ -87,6 +87,16 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
       WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND attempts >= 4
       AND last_error = 'El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI.'`)
       .bind(now + 5 * 60_000, publicationCutoff).run();
+    if (options.brandName && options.maxLocalDate) {
+      await db.prepare(`UPDATE autopilot_slots
+        SET status = 'pending', attempts = 0, claim_id = NULL, updated_at = ?
+        WHERE status = 'failed' AND post_id IS NULL AND attempts >= 4
+          AND brand_id IN (SELECT id FROM brand_registry WHERE name = ?)
+          AND (? IS NULL OR local_date >= ?)
+          AND local_date <= ?
+          AND last_error = 'No se pudo crear el contenido. Intenta de nuevo en un momento.'`)
+        .bind(now - 2 * 60_000, options.brandName, options.minLocalDate ?? null, options.minLocalDate ?? null, options.maxLocalDate).run();
+    }
     const brandScopeClause = options.brandName
       ? " AND b.name = ?"
       : options.excludeNames?.length
@@ -180,13 +190,14 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
       const message = error instanceof Error ? error.message.slice(0,300) : "No se pudo generar el contenido.";
       const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
       const creditsExhausted = code === "OPENAI_CREDITS_EXHAUSTED";
+      const transientProvider = code === "OPENAI_TRANSIENT_RESPONSE";
       console.error("Social Studio autopilot generation failed", due.name, due.media_type, due.local_date, message);
-      if (creditsExhausted) {
+      if (creditsExhausted || transientProvider) {
         await db.prepare(`UPDATE autopilot_slots
           SET status = 'failed', attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
               last_error = ?, updated_at = ?
           WHERE id = ? AND claim_id = ? AND status = 'processing'`)
-          .bind(message, Date.now() + 5 * 60_000, due.id, claim).run();
+          .bind(message, Date.now() + (creditsExhausted ? 5 : 1) * 60_000, due.id, claim).run();
       } else {
         await db.prepare("UPDATE autopilot_slots SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND claim_id = ? AND status = 'processing'")
           .bind(message, Date.now(), due.id, claim).run();
