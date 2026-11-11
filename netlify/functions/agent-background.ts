@@ -15,9 +15,13 @@ export default async (request: Request) => {
   const priorityBrands = ["D’Neyla", "Bahia Investment", "Manglar"];
   const today = localDate(Date.now());
   const fillStart = addDays(today, 1);
-  const splitDate = addDays(today, 30);
-  const secondStart = addDays(today, 31);
   const fillThrough = addDays(today, 60);
+  const ranges = [
+    { from: 1, to: 15 },
+    { from: 16, to: 30 },
+    { from: 31, to: 45 },
+    { from: 46, to: 60 },
+  ];
   const beforeSummary = await env.DB.prepare(`SELECT b.name, s.status, COUNT(*) AS total
     FROM autopilot_slots s
     JOIN brand_registry b ON b.id=s.brand_id AND b.owner_id=s.owner_id
@@ -27,28 +31,18 @@ export default async (request: Request) => {
     ORDER BY b.name, s.status`).bind(fillStart, fillThrough).all<{name:string;status:string;total:number}>();
   console.warn("Social Studio 60-day autofill progress", JSON.stringify(beforeSummary.results ?? []));
   const results = await Promise.allSettled([
-    ...priorityBrands.flatMap(brandName => [
-      (async () => {
-        for (let i = 0; i < 6; i++) {
-          await processBrandAgentSchedules(env.DB!, {
-            brandName,
-            minLocalDate: fillStart,
-            maxLocalDate: splitDate,
-            workerKey: `${brandName}:days-1-30`,
-          });
-        }
-      })(),
-      (async () => {
-        for (let i = 0; i < 6; i++) {
-          await processBrandAgentSchedules(env.DB!, {
-            brandName,
-            minLocalDate: secondStart,
-            maxLocalDate: fillThrough,
-            workerKey: `${brandName}:days-31-60`,
-          });
-        }
-      })(),
-    ]),
+    ...priorityBrands.flatMap(brandName => ranges.map(({ from, to }) => (async () => {
+      const minLocalDate = addDays(today, from);
+      const maxLocalDate = addDays(today, to);
+      for (let i = 0; i < 18; i++) {
+        await processBrandAgentSchedules(env.DB!, {
+          brandName,
+          minLocalDate,
+          maxLocalDate,
+          workerKey: `${brandName}:days-${from}-${to}`,
+        });
+      }
+    })())),
     processBrandAgentSchedules(env.DB, { excludeNames: priorityBrands }),
   ]);
   console.warn("Social Studio 60-day autofill window", fillStart, fillThrough);
