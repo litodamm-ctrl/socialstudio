@@ -18,6 +18,14 @@ export default async (request: Request) => {
   const splitDate = addDays(today, 30);
   const secondStart = addDays(today, 31);
   const fillThrough = addDays(today, 60);
+  const beforeSummary = await env.DB.prepare(`SELECT b.name, s.status, COUNT(*) AS total
+    FROM autopilot_slots s
+    JOIN brand_registry b ON b.id=s.brand_id AND b.owner_id=s.owner_id
+    WHERE b.name IN ('D’Neyla','Bahia Investment','Manglar')
+      AND s.local_date >= ? AND s.local_date <= ?
+    GROUP BY b.name, s.status
+    ORDER BY b.name, s.status`).bind(fillStart, fillThrough).all<{name:string;status:string;total:number}>();
+  console.warn("Social Studio 60-day autofill progress", JSON.stringify(beforeSummary.results ?? []));
   const results = await Promise.allSettled([
     ...priorityBrands.flatMap(brandName => [
       (async () => {
