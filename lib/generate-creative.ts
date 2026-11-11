@@ -164,11 +164,7 @@ export async function POST(request: Request) {
       ...selectedContent,
     ];
     const openAIBaseUrl = configuredAIBaseUrl.replace(/\/$/, "");
-    const response = await fetch(`${openAIBaseUrl}/v1/responses`, {
-      method: "POST",
-      signal: AbortSignal.timeout(240_000),
-      headers: { Authorization: `Bearer ${openAIKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
+    const responsePayload = JSON.stringify({
         model: "gpt-6-luna",
         instructions: [
           "Eres el agente creativo de Social Studio para publicaciones orgánicas de Instagram.",
@@ -204,9 +200,28 @@ export async function POST(request: Request) {
             },
           },
         },
-      }),
-    });
-    const result = await response.json() as { output?: ResponseOutput[]; output_text?: string; error?: { message?: string } };
+      });
+    let response: Response | null = null;
+    let result: { output?: ResponseOutput[]; output_text?: string; error?: { message?: string } } | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      response = await fetch(`${openAIBaseUrl}/v1/responses`, {
+        method: "POST",
+        signal: AbortSignal.timeout(240_000),
+        headers: { Authorization: `Bearer ${openAIKey}`, "content-type": "application/json" },
+        body: JSON.stringify(responsePayload),
+      });
+      const rawResponse = await response.text();
+      try {
+        result = rawResponse ? JSON.parse(rawResponse) as typeof result : null;
+      } catch {
+        console.warn("OpenAI creative response returned invalid JSON", attempt + 1, rawResponse.slice(0, 120));
+        result = null;
+      }
+      if (result) break;
+      if (attempt === 0) continue;
+      return Response.json({ error: "El proveedor devolvió una respuesta incompleta. Se reintentará automáticamente.", code: "OPENAI_TRANSIENT_RESPONSE" }, { status: 502 });
+    }
+    if (!response || !result) return Response.json({ error: "El proveedor no devolvió una respuesta válida.", code: "OPENAI_TRANSIENT_RESPONSE" }, { status: 502 });
     if (!response.ok) {
       const providerMessage = result.error?.message ?? "";
       const creditsExhausted = response.status === 429 && /no credits remaining|credit_balance_exhausted/i.test(providerMessage);
