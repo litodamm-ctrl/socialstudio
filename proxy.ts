@@ -4,6 +4,7 @@ import { sessionCookieName, verifySession } from "@/lib/session";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/login" || pathname === "/api/auth/login" || pathname.startsWith("/.netlify/functions/")) return NextResponse.next();
+  if (request.method === "GET" && pathname === "/api/internal/autofill-progress") return NextResponse.next();
   if (pathname.startsWith("/api/media/") && request.method === "GET" && request.nextUrl.searchParams.has("signature")) return NextResponse.next();
 
   // Only unguessable, consented photo grants and the exact TikTok ownership file are public.
