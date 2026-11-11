@@ -7,14 +7,20 @@ type Brand = { id: string; owner_id: string; name: string; brand_essence: string
 type Slot = { id: string; brand_id: string; owner_id: string; local_date: string; media_type: string; scheduled_at: string; objective: string; name: string; brand_essence: string };
 
 // One paid creative at a time across invocations. Slots survive crashes and cancellations.
-type SchedulerOptions = { brandName?: string; excludeNames?: string[]; maxLocalDate?: string };
+type SchedulerOptions = { brandName?: string; excludeNames?: string[]; minLocalDate?: string; maxLocalDate?: string; workerKey?: string };
 
 export async function processBrandAgentSchedules(db: D1Database, options: SchedulerOptions = {}) {
   await ensureBrandRegistry(db);
   await ensureAutopilotTables(db);
   const now = Date.now();
   const claim = crypto.randomUUID();
-  const workerId = options.brandName ? `generation:${options.brandName}` : options.excludeNames?.length ? "generation:other-brands" : "generation";
+  const workerId = options.workerKey
+    ? `generation:${options.workerKey}`
+    : options.brandName
+      ? `generation:${options.brandName}`
+      : options.excludeNames?.length
+        ? "generation:other-brands"
+        : "generation";
   await db.prepare("INSERT OR IGNORE INTO autopilot_worker (id, lease_until) VALUES (?, 0)").bind(workerId).run();
   const lock = await db.prepare("UPDATE autopilot_worker SET claim_id = ?, lease_until = ? WHERE id = ? AND lease_until < ? RETURNING id")
     .bind(claim, now + 12 * 60_000, workerId, now).first();
@@ -86,10 +92,12 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
       : options.excludeNames?.length
         ? ` AND b.name NOT IN (${options.excludeNames.map(() => "?").join(",")})`
         : "";
-    const dateScopeClause = options.maxLocalDate ? " AND s.local_date <= ?" : "";
-    const scopeClause = `${brandScopeClause}${dateScopeClause}`;
+    const minDateScopeClause = options.minLocalDate ? " AND s.local_date >= ?" : "";
+    const maxDateScopeClause = options.maxLocalDate ? " AND s.local_date <= ?" : "";
+    const scopeClause = `${brandScopeClause}${minDateScopeClause}${maxDateScopeClause}`;
     const scopeValues = [
       ...(options.brandName ? [options.brandName] : (options.excludeNames ?? [])),
+      ...(options.minLocalDate ? [options.minLocalDate] : []),
       ...(options.maxLocalDate ? [options.maxLocalDate] : []),
     ];
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
@@ -106,10 +114,19 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
         return;
       }
       const summary = options.brandName
-        ? await db.prepare(`SELECT s.status, COUNT(*) AS total FROM autopilot_slots s JOIN brand_registry b ON b.id=s.brand_id WHERE b.name=? AND (? IS NULL OR s.local_date <= ?) GROUP BY s.status ORDER BY s.status`)
-            .bind(options.brandName, options.maxLocalDate ?? null, options.maxLocalDate ?? null).all<{status:string;total:number}>()
+        ? await db.prepare(`SELECT s.status, COUNT(*) AS total FROM autopilot_slots s
+            JOIN brand_registry b ON b.id=s.brand_id
+            WHERE b.name=?
+              AND (? IS NULL OR s.local_date >= ?)
+              AND (? IS NULL OR s.local_date <= ?)
+            GROUP BY s.status ORDER BY s.status`)
+            .bind(
+              options.brandName,
+              options.minLocalDate ?? null, options.minLocalDate ?? null,
+              options.maxLocalDate ?? null, options.maxLocalDate ?? null
+            ).all<{status:string;total:number}>()
         : await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
-      console.warn("Social Studio autopilot idle", options.brandName ?? "all", options.maxLocalDate ?? "", JSON.stringify(summary.results ?? []));
+      console.warn("Social Studio autopilot idle", options.brandName ?? "all", options.minLocalDate ?? "", options.maxLocalDate ?? "", JSON.stringify(summary.results ?? []));
       return;
     }
     const start = `${due.local_date}T05:00:00.000Z`;
