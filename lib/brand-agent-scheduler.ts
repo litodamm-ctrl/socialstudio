@@ -7,7 +7,7 @@ type Brand = { id: string; owner_id: string; name: string; brand_essence: string
 type Slot = { id: string; brand_id: string; owner_id: string; local_date: string; media_type: string; scheduled_at: string; objective: string; name: string; brand_essence: string };
 
 // One paid creative at a time across invocations. Slots survive crashes and cancellations.
-type SchedulerOptions = { brandName?: string; excludeNames?: string[] };
+type SchedulerOptions = { brandName?: string; excludeNames?: string[]; maxLocalDate?: string };
 
 export async function processBrandAgentSchedules(db: D1Database, options: SchedulerOptions = {}) {
   await ensureBrandRegistry(db);
@@ -81,12 +81,17 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
       WHERE status = 'failed' AND post_id IS NULL AND scheduled_at > ? AND attempts >= 4
       AND last_error = 'El agente no pudo generar este creativo. Revisa la clave y los límites de tu cuenta de OpenAI.'`)
       .bind(now + 5 * 60_000, publicationCutoff).run();
-    const scopeClause = options.brandName
+    const brandScopeClause = options.brandName
       ? " AND b.name = ?"
       : options.excludeNames?.length
         ? ` AND b.name NOT IN (${options.excludeNames.map(() => "?").join(",")})`
         : "";
-    const scopeValues = options.brandName ? [options.brandName] : (options.excludeNames ?? []);
+    const dateScopeClause = options.maxLocalDate ? " AND s.local_date <= ?" : "";
+    const scopeClause = `${brandScopeClause}${dateScopeClause}`;
+    const scopeValues = [
+      ...(options.brandName ? [options.brandName] : (options.excludeNames ?? [])),
+      ...(options.maxLocalDate ? [options.maxLocalDate] : []),
+    ];
     const due = await db.prepare(`SELECT s.*, b.name, b.brand_essence FROM autopilot_slots s
       JOIN brand_registry b ON b.id = s.brand_id AND b.owner_id = s.owner_id
       JOIN instagram_accounts a ON a.owner_id = b.owner_id AND a.brand = b.name
@@ -96,16 +101,15 @@ export async function processBrandAgentSchedules(db: D1Database, options: Schedu
       ORDER BY s.local_date, s.attempts, COALESCE((SELECT MAX(t.updated_at) FROM autopilot_slots t WHERE t.brand_id = b.id AND t.attempts > 0),0), s.scheduled_at LIMIT 1`)
       .bind(now - 60_000, ...scopeValues).first<Slot>();
     if (!due) {
-      // Calendar repair is useful, but it must never starve the automatic content queue.
-      // Only spend this invocation on a refresh when there is no new autopilot slot to generate.
-      if (await processCalendarRefresh(db, generateCreative, claim)) {
+      if (!options.brandName && await processCalendarRefresh(db, generateCreative, claim)) {
         console.info("Social Studio calendar refresh processed while autopilot was idle");
         return;
       }
       const summary = options.brandName
-        ? await db.prepare(`SELECT s.status, COUNT(*) AS total FROM autopilot_slots s JOIN brand_registry b ON b.id=s.brand_id WHERE b.name=? GROUP BY s.status ORDER BY s.status`).bind(options.brandName).all<{status:string;total:number}>()
+        ? await db.prepare(`SELECT s.status, COUNT(*) AS total FROM autopilot_slots s JOIN brand_registry b ON b.id=s.brand_id WHERE b.name=? AND (? IS NULL OR s.local_date <= ?) GROUP BY s.status ORDER BY s.status`)
+            .bind(options.brandName, options.maxLocalDate ?? null, options.maxLocalDate ?? null).all<{status:string;total:number}>()
         : await db.prepare(`SELECT status, COUNT(*) AS total FROM autopilot_slots GROUP BY status ORDER BY status`).all<{status:string;total:number}>();
-      console.warn("Social Studio autopilot idle", JSON.stringify(summary.results ?? []));
+      console.warn("Social Studio autopilot idle", options.brandName ?? "all", options.maxLocalDate ?? "", JSON.stringify(summary.results ?? []));
       return;
     }
     const start = `${due.local_date}T05:00:00.000Z`;
