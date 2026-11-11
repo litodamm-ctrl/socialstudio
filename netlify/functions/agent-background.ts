@@ -17,10 +17,18 @@ export default async (request: Request) => {
   const fillStart = addDays(today, 1);
   const fillThrough = addDays(today, 60);
   const ranges = [
-    { from: 1, to: 15 },
-    { from: 16, to: 30 },
-    { from: 31, to: 45 },
-    { from: 46, to: 60 },
+    { from: 1, to: 5 },
+    { from: 6, to: 10 },
+    { from: 11, to: 15 },
+    { from: 16, to: 20 },
+    { from: 21, to: 25 },
+    { from: 26, to: 30 },
+    { from: 31, to: 35 },
+    { from: 36, to: 40 },
+    { from: 41, to: 45 },
+    { from: 46, to: 50 },
+    { from: 51, to: 55 },
+    { from: 56, to: 60 },
   ];
   const beforeSummary = await env.DB.prepare(`SELECT b.name, s.status, COUNT(*) AS total
     FROM autopilot_slots s
@@ -34,7 +42,7 @@ export default async (request: Request) => {
     ...priorityBrands.flatMap(brandName => ranges.map(({ from, to }) => (async () => {
       const minLocalDate = addDays(today, from);
       const maxLocalDate = addDays(today, to);
-      for (let i = 0; i < 18; i++) {
+      for (let i = 0; i < 10; i++) {
         await processBrandAgentSchedules(env.DB!, {
           brandName,
           minLocalDate,
