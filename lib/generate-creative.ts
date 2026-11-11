@@ -212,7 +212,7 @@ export async function POST(request: Request) {
       });
       const rawResponse = await response.text();
       try {
-        result = rawResponse ? JSON.parse(rawResponse) as typeof result : null;
+        result = rawResponse ? JSON.parse(rawResponse) as { output?: ResponseOutput[]; output_text?: string; error?: { message?: string } } : null;
       } catch {
         console.warn("OpenAI creative response returned invalid JSON", attempt + 1, rawResponse.slice(0, 120));
         result = null;
