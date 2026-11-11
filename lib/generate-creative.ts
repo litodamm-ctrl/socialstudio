@@ -164,7 +164,7 @@ export async function POST(request: Request) {
       ...selectedContent,
     ];
     const openAIBaseUrl = configuredAIBaseUrl.replace(/\/$/, "");
-    const responsePayload = JSON.stringify({
+    const responsePayload = {
         model: "gpt-6-luna",
         instructions: [
           "Eres el agente creativo de Social Studio para publicaciones orgánicas de Instagram.",
@@ -200,7 +200,7 @@ export async function POST(request: Request) {
             },
           },
         },
-      });
+      };
     let response: Response | null = null;
     let result: { output?: ResponseOutput[]; output_text?: string; error?: { message?: string } } | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
